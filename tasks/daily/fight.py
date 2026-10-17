@@ -84,6 +84,15 @@ class Fight:
     def start():
         log.hr("准备锄大地", 0)
 
+        if cfg.cloud_game_enable:
+            from module.fight_cloud.runner import run_cloud_fight
+            from module.game import get_game_controller
+            if run_cloud_fight(cfg, get_game_controller(), log):
+                cfg.save_timestamp("fight_timestamp")
+                Base.send_notification_with_screenshot(cfg.notify_template['FightCompleted'], NotificationLevel.ALL)
+                return True
+            return False
+
         if sys.platform != 'win32':
             log.warning("锄大地功能仅支持 Windows 平台")
             return False

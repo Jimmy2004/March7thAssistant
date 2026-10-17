@@ -48,7 +48,7 @@ CONFIG_PATH = APP_ROOT / "config.yaml"
 SETTINGS_DIR = APP_ROOT / "settings"
 TERMINAL_SETTINGS_PATH = SETTINGS_DIR / "terminal.json"
 
-# 仅使用云游戏内置任务；不在此处冒充任何尚未支持的 fight/universe 入口。
+# 已接入终端运行器的云游戏任务。
 TASK_CHOICES: tuple[str, ...] = (
     "main",
     "routine",
@@ -63,9 +63,15 @@ TASK_CHOICES: tuple[str, ...] = (
     "screen_test",
     "autoplot",
     "screenshot",
+    "fight",
 )
 
 # 强制写入 config.yaml 的云游戏相关字段，确保终端配置始终可用。
+#
+# 注意：``fight_enable`` 不在此处强制覆盖——它的初值由
+# ``assets/config/config.example.yaml``（默认 ``false``）提供；用户在
+# 「运行设置 → 锄大地」里手动开启后，``write_config_yaml`` 的 answers
+# 会把对应的答案写回 config.yaml，从而保留用户的「开启」决策。
 CLOUD_GAME_DEFAULTS: dict[str, Any] = {
     "cloud_game_enable": True,
     "browser_headless_enable": True,  # 由 debug 标志在写入时取反
@@ -77,9 +83,78 @@ CLOUD_GAME_DEFAULTS: dict[str, Any] = {
     "check_update": False,
     "auto_update": False,
     "universe_enable": False,
-    "fight_enable": False,
     "telemetry_enable": False,
 }
+
+# 与资源校验清单共用同一个固定版本。
+FIGHT_RESOURCE_VERSION = json.loads(
+    (APP_ROOT / "module/fight_cloud/engine.json").read_text(encoding="utf-8")
+)["revision"][:12]
+
+# 锄大地设置项 → ``write_config_yaml(answers=...)`` 允许出现的 key 白名单。
+#
+# 只有下列 key 才会被「锄大地设置」子菜单写入 config.yaml，避免 UI 误
+# 改其他无关字段。``fight_enable`` 必须出现——「完整运行」会按其值决定
+# 是否把锄大地纳入主流程。``FIGHT_ANSWER_KEYS`` 与下方的
+# ``FIGHT_ADVANCED_ANSWER_KEYS`` 合并构成「锄大地 answers」完整白名
+# 单，``write_config_yaml`` 通过 ``_FIGHT_ANSWER_WRITERS`` 统一管控。
+FIGHT_ANSWER_KEYS: frozenset[str] = frozenset({
+    "fight_enable",
+    "fight_map_version",
+    "fight_main_map",
+    "fight_timeout",
+    "fight_team_enable",
+    "fight_team_number",
+    "fight_reward_enable",
+    "fight_allow_map_buy",
+    "fight_allow_snack_buy",
+    "fight_allow_memory_token",
+})
+
+# 云游戏路线的高级设置。
+FIGHT_ADVANCED_ANSWER_KEYS: frozenset[str] = frozenset({
+    "fight_start_map",
+    "fight_single_map",
+})
+
+
+def fight_answer_allowlist() -> frozenset[str]:
+    """返回「锄大地」answers 允许出现的所有 key 并集。
+
+    测试与外部调用方可使用本函数断言 ``write_config_yaml`` 不会让非
+    白名单键穿透到 config.yaml。
+    """
+    return FIGHT_ANSWER_KEYS | FIGHT_ADVANCED_ANSWER_KEYS
+
+# 锄大地地图版本：菜单编号 → 存储键。
+# 5 档分别对应 Fhoe-Rail 的不同执行策略，存储时直接落 raw key，UI 文
+# 案与示例配置中的 ``不配置`` 不重叠——菜单内不提供「不配置」档，因为
+# 是否启用由 ``fight_enable`` 控制。
+_FIGHT_MAP_VERSION_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("1", "default"),       # 默认（疾跑）
+    ("2", "default_lite"),  # 默认（轻量）
+    ("3", "HuangQuan"),     # 黄泉专用
+    ("4", "technique"),     # 秘技路线
+    ("5", "reward"),        # 获得特殊物品
+)
+
+_FIGHT_MAP_LABELS = {
+    "default": "默认路线", "default_lite": "精简路线", "HuangQuan": "黄泉专用",
+    "technique": "秘技路线", "reward": "特殊物品领取",
+}
+
+# 锄大地优先星球：菜单编号 → 存储值（字符串数字）。
+# 存储值 0 自动选择；1..6 对应资源中的六个区域。
+_FIGHT_MAIN_MAP_OPTIONS: tuple[tuple[str, str, str], ...] = (
+    # (菜单编号, 存储值, 中文标签)
+    ("1", "0", "不配置"),
+    ("2", "1", "空间站"),
+    ("3", "2", "雅利洛"),
+    ("4", "3", "仙舟"),
+    ("5", "4", "匹诺康尼"),
+    ("6", "5", "翁法罗斯"),
+    ("7", "6", "第六区域"),
+)
 
 # 退出码常量；便于脚本化调用方做分支处理。
 EXIT_OK = 0
@@ -236,6 +311,10 @@ def write_config_yaml(debug: bool = False, answers: dict[str, Any] | None = None
 
             base["cloud_game_video_quality"] = normalize_quality(answers["video_quality"])
 
+        # 锄大地设置项：只有白名单内的 key 才会被写入；其它字段（如
+        # 调用方误传的 ``account``）一律忽略，避免污染 config.yaml。
+        _apply_fight_answers(base, answers)
+
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(dir=CONFIG_PATH.parent, suffix=".tmp")
     try:
@@ -258,6 +337,38 @@ def _merge_yaml(base: Any, overlay: Any) -> None:
             _merge_yaml(base[key], value)
         else:
             base[key] = value
+
+
+# 「锄大地」答案键的写入映射。所有 UI 输入都必须先经过此函数归一化
+# 后再写入 config.yaml；不在白名单内的 key 一律忽略，避免误改其它字段。
+_FIGHT_ANSWER_WRITERS: dict[str, Callable[[Any], Any]] = {
+    "fight_enable": bool,
+    "fight_map_version": str,
+    "fight_main_map": lambda v: str(int(v)),
+    "fight_timeout": lambda v: max(1, min(24, int(v))),
+    "fight_team_enable": bool,
+    "fight_team_number": lambda v: str(max(1, min(10, int(v)))),
+    "fight_reward_enable": bool,
+    "fight_allow_map_buy": bool,
+    "fight_allow_snack_buy": bool,
+    "fight_allow_memory_token": bool,
+    "fight_start_map": str,
+    "fight_single_map": bool,
+}
+
+
+def _apply_fight_answers(base: dict[str, Any], answers: dict[str, Any]) -> None:
+    """把锄大地白名单内的 answer 写入 ``base``；其它 key 忽略。"""
+    if not isinstance(base, dict) or not isinstance(answers, dict):
+        return
+    for key, value in answers.items():
+        if key not in _FIGHT_ANSWER_WRITERS:
+            continue
+        try:
+            base[key] = _FIGHT_ANSWER_WRITERS[key](value)
+        except (TypeError, ValueError):
+            # 调用方传入了无法规约的值——静默跳过而非崩溃，让写盘动作仍能完成。
+            continue
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -736,6 +847,392 @@ def _action_cloud_game_video_quality() -> int:
     return EXIT_OK
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 「设置 → 锄大地」子菜单
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# 「锄大地」设置项的菜单编号 → 中文标题 / 简短提示。
+# 真实配置键由 ``write_config_yaml(answers=...)`` 写入；这里只负责
+# 收集 UI 答案并按白名单落盘。
+_FIGHT_MENU_ITEMS: tuple[tuple[str, str, str], ...] = (
+    # (菜单编号, 中文标题, 简介)
+    ("1", "启用锄大地（影响「完整运行」）", "总开关：决定「完整运行」是否包含锄大地流程"),
+    ("2", "地图版本", "Fhoe-Rail 引擎执行策略；默认（疾跑）/ 默认（轻量）/ 黄泉专用 / 秘技零食 / 获得特殊物品"),
+    ("3", "优先星球", "自动选择或指定已解锁区域"),
+    ("4", "超时时间（小时）", "1..24 小时，到点强制结束"),
+    ("5", "启用自动切换队伍", "开始锄大地前是否自动切换队伍"),
+    ("6", "自动切换队伍编号", "1..10，对应游戏内队伍槽位"),
+    ("7", "启用「特殊物品领取」", "开启后才会向锄大地写入购买 / 秘技零食 / 记忆代币三项"),
+    ("8", "每周购买代币与过期邮包", "对应 fight_allow_map_buy"),
+    ("9", "每日购买秘技零食", "对应 fight_allow_snack_buy"),
+    ("10", "每周获得翁法罗斯记忆代币", "对应 fight_allow_memory_token"),
+    ("11", "检查 / 下载 Fhoe 引擎资源", "按 FIGHT_RESOURCE_VERSION 拉取引擎资源；可能需要联网"),
+    ("12", "高级：起始地图", "格式 [1-6]-[行]_[列]，留空由引擎自动"),
+    ("13", "高级：单地图模式", "true = 只刷指定一张地图"),
+)
+
+
+def _read_current_fight_value(key: str) -> Any:
+    """从 config.yaml 读取指定 key 的当前值；不存在时返回 ``None``。"""
+    data = _load_yaml(CONFIG_PATH)
+    if not isinstance(data, dict):
+        return None
+    return data.get(key)
+
+
+def _format_fight_bool_for_display(key: str) -> str:
+    """把布尔值翻译成中文「开 / 关」标签，便于在菜单标题中显示。"""
+    raw = _read_current_fight_value(key)
+    if raw is None:
+        return "（未设置）"
+    return "开" if raw is True else ("未配置" if raw == "不配置" else "关")
+
+
+def _format_fight_int_for_display(key: str) -> str:
+    raw = _read_current_fight_value(key)
+    if raw is None:
+        return "（未设置）"
+    return str(raw)
+
+
+def _format_fight_map_version_for_display(key: str) -> str:
+    raw = _read_current_fight_value(key)
+    if raw is None:
+        return "（未设置）"
+    for number, option in _FIGHT_MAP_VERSION_OPTIONS:
+        if option == raw:
+            return _FIGHT_MAP_LABELS[option]
+    return str(raw)
+
+
+def _format_fight_main_map_for_display(key: str) -> str:
+    raw = _read_current_fight_value(key)
+    if raw is None:
+        return "（未设置）"
+    for number, value, label in _FIGHT_MAIN_MAP_OPTIONS:
+        if value == str(raw):
+            return f"{label}（{value}）"
+    return str(raw)
+
+
+def _write_fight_answer(answer_key: str, value: Any) -> None:
+    """把单条锄大地答案写回 config.yaml（原子写入）。"""
+    settings = _load_terminal_settings()
+    debug = bool(settings.get("debug", False))
+    write_config_yaml(debug=debug, answers={answer_key: value})
+
+
+def _action_fight_enable() -> int:
+    """菜单 1：启用 / 关闭锄大地。"""
+    current = bool(_read_current_fight_value("fight_enable"))
+    print(f"  当前：{'开' if current else '关'}。")
+    return _prompt_and_write_bool(
+        "fight_enable",
+        "是否启用锄大地（影响「完整运行」流程）",
+        default=current,
+    )
+
+
+def _action_fight_map_version() -> int:
+    """菜单 2：选择地图版本。"""
+    print("── 地图版本 ──")
+    for number, key in _FIGHT_MAP_VERSION_OPTIONS:
+        marker = "（当前）" if key == _read_current_fight_value("fight_map_version") else ""
+        print(f"  {number}. {_FIGHT_MAP_LABELS[key]} {marker}".rstrip())
+    print("  0/b. 返回")
+
+    raw = _prompt("请选择地图版本（0 或 b 返回）", default="0")
+    if raw.lower() in {"0", "b", "back"}:
+        return EXIT_OK
+    for number, key in _FIGHT_MAP_VERSION_OPTIONS:
+        if raw == number:
+            _write_fight_answer("fight_map_version", key)
+            print(f"  已将地图版本设置为：{_FIGHT_MAP_LABELS[key]}（下次启动自动应用）")
+            return EXIT_OK
+    print(f"  ! 无效输入：{raw!r}")
+    return EXIT_OK
+
+
+def _action_fight_main_map() -> int:
+    """菜单 3：选择优先星球。"""
+    print("── 优先星球 ──")
+    current_raw = _read_current_fight_value("fight_main_map")
+    current_str = None if current_raw is None else str(current_raw)
+    for number, value, label in _FIGHT_MAIN_MAP_OPTIONS:
+        marker = "（当前）" if value == current_str else ""
+        print(f"  {number}. {label}（{value}） {marker}".rstrip())
+    print("  0/b. 返回")
+
+    raw = _prompt("请选择优先星球（0 或 b 返回）", default="0")
+    if raw.lower() in {"0", "b", "back"}:
+        return EXIT_OK
+    for number, value, _label in _FIGHT_MAIN_MAP_OPTIONS:
+        if raw == number:
+            _write_fight_answer("fight_main_map", value)
+            print(f"  已将优先星球设置为：{value}（下次启动自动应用）")
+            return EXIT_OK
+    print(f"  ! 无效输入：{raw!r}")
+    return EXIT_OK
+
+
+def _action_fight_timeout() -> int:
+    """菜单 4：超时时间（小时）。"""
+    current = _read_current_fight_value("fight_timeout")
+    default = int(current) if isinstance(current, (int, str)) and str(current).isdigit() else 12
+    return _prompt_and_write_int(
+        "fight_timeout",
+        "锄大地超时时间（小时，1-24）",
+        minimum=1,
+        maximum=24,
+        default=default,
+    )
+
+
+def _action_fight_team_enable() -> int:
+    """菜单 5：是否在锄大地前自动切队。"""
+    current = bool(_read_current_fight_value("fight_team_enable"))
+    return _prompt_and_write_bool(
+        "fight_team_enable",
+        "是否在锄大地前自动切换队伍",
+        default=current,
+    )
+
+
+def _action_fight_team_number() -> int:
+    """菜单 6：自动切队编号。"""
+    current = _read_current_fight_value("fight_team_number")
+    default = int(current) if isinstance(current, (int, str)) and str(current).isdigit() else 1
+    return _prompt_and_write_int(
+        "fight_team_number",
+        "自动切换队伍编号（1-10）",
+        minimum=1,
+        maximum=10,
+        default=default,
+    )
+
+
+def _action_fight_reward_enable() -> int:
+    """菜单 7：是否向锄大地写入「特殊物品领取」三项。"""
+    current = bool(_read_current_fight_value("fight_reward_enable"))
+    return _prompt_and_write_bool(
+        "fight_reward_enable",
+        "启用「特殊物品领取」",
+        default=current,
+    )
+
+
+def _action_fight_allow_map_buy() -> int:
+    current = _read_current_fight_value("fight_allow_map_buy") is True
+    return _prompt_and_write_bool(
+        "fight_allow_map_buy",
+        "每周购买代币与过期邮包",
+        default=current,
+    )
+
+
+def _action_fight_allow_snack_buy() -> int:
+    current = _read_current_fight_value("fight_allow_snack_buy") is True
+    return _prompt_and_write_bool(
+        "fight_allow_snack_buy",
+        "每日购买秘技零食",
+        default=current,
+    )
+
+
+def _action_fight_allow_memory_token() -> int:
+    current = _read_current_fight_value("fight_allow_memory_token") is True
+    return _prompt_and_write_bool(
+        "fight_allow_memory_token",
+        "每周获得翁法罗斯记忆代币",
+        default=current,
+    )
+
+
+def _action_fight_prepare_resources() -> int:
+    """菜单 11：检查 / 下载引擎资源。
+
+    真实下载/校验由 ``module.fight_cloud.resources.prepare_resources`` 完
+    成；前端只把安装根目录（``APP_ROOT``）交给后端，并显示其返回的
+    ``pathlib.Path``。后端模块未提供或调用失败时打印可读错误并返回
+    ``EXIT_RUNTIME``，不抛异常，不触发额外的网络代码（网络访问全部由
+    后端模块自行管理）。
+    """
+    print(f"  目标引擎版本：{FIGHT_RESOURCE_VERSION}")
+    print("  正在按需下载 / 校验 Fhoe 引擎资源（可能需要联网）...")
+    try:
+        from module.fight_cloud.resources import prepare_resources  # 延迟导入
+    except ImportError as exc:
+        print(
+            f"  ! 引擎资源模块尚未提供（module.fight_cloud.resources）：{exc}",
+            file=sys.stderr,
+        )
+        print(
+            "  ! 云游戏适配模块缺失，请更新本分支代码后重试。",
+            file=sys.stderr,
+        )
+        return EXIT_RUNTIME
+    try:
+        target: Path = prepare_resources(APP_ROOT)
+    except Exception as exc:
+        print(f"  ! 下载 / 校验失败：{exc}", file=sys.stderr)
+        return EXIT_RUNTIME
+    print(f"  资源已就绪：{target}")
+    return EXIT_OK
+
+
+def _action_fight_start_map() -> int:
+    """菜单 12：高级 — 起始地图字符串（正则 [1-6]-[0-9]+_[0-9]+）。"""
+    import re as _re
+
+    current = _read_current_fight_value("fight_start_map")
+    default = "" if not current else str(current)
+    while True:
+        raw = _prompt(
+            "起始地图（格式 [1-6]-[行]_[列]，如 1-1_3；留空交给引擎自动）",
+            default="",
+        )
+        if raw.lower() in {"b", "back"}:
+            return EXIT_OK
+        if raw == "0":
+            return EXIT_OK
+        if raw == "":
+            _write_fight_answer("fight_start_map", "")
+            print("  已留空：起始地图由引擎自动决定。")
+            return EXIT_OK
+        if _re.fullmatch(r"[1-6]-[0-9]+_[0-9]+", raw):
+            _write_fight_answer("fight_start_map", raw)
+            print(f"  已将起始地图设置为：{raw}（下次启动自动应用）")
+            return EXIT_OK
+        print(f"  ! 格式不正确：{raw!r}，应为 [1-6]-[行]_[列]，例如 1-1_3。")
+
+
+def _action_fight_single_map() -> int:
+    """菜单 13：高级 — 是否只刷一张地图。"""
+    current = bool(_read_current_fight_value("fight_single_map"))
+    return _prompt_and_write_bool(
+        "fight_single_map",
+        "是否只刷一张地图（true=只刷指定起始地图）",
+        default=current,
+    )
+
+
+def _prompt_and_write_bool(
+    config_key: str,
+    prompt_text: str,
+    *,
+    default: bool,
+) -> int:
+    """通用的「开关 / 否」设置子流程：返回 EXIT_OK。"""
+    try:
+        value = _prompt_yes_no(prompt_text, default=default)
+    except _BackSignal:
+        return EXIT_OK
+    _write_fight_answer(config_key, value)
+    state = "开" if value else "关"
+    print(f"  已将「{prompt_text}」设置为：{state}（下次启动自动应用）")
+    return EXIT_OK
+
+
+def _prompt_and_write_int(
+    config_key: str,
+    prompt_text: str,
+    *,
+    minimum: int,
+    maximum: int,
+    default: int,
+) -> int:
+    """通用的「范围整数」设置子流程：返回 EXIT_OK。"""
+    try:
+        value = _prompt_int(prompt_text, minimum=minimum, maximum=maximum, default=default)
+    except _BackSignal:
+        return EXIT_OK
+    _write_fight_answer(config_key, value)
+    print(f"  已将「{prompt_text}」设置为：{value}（下次启动自动应用）")
+    return EXIT_OK
+
+
+# 「设置 → 锄大地」内部子动作派发表。``None`` 哨兵留给未来扩展。
+_FIGHT_SUB_ACTIONS: dict[str, Callable[[], int]] = {
+    "1": _action_fight_enable,
+    "2": _action_fight_map_version,
+    "3": _action_fight_main_map,
+    "4": _action_fight_timeout,
+    "5": _action_fight_team_enable,
+    "6": _action_fight_team_number,
+    "7": _action_fight_reward_enable,
+    "8": _action_fight_allow_map_buy,
+    "9": _action_fight_allow_snack_buy,
+    "10": _action_fight_allow_memory_token,
+    "11": _action_fight_prepare_resources,
+    "12": _action_fight_start_map,
+    "13": _action_fight_single_map,
+}
+
+
+def _render_fight_submenu() -> None:
+    """把锄大地子菜单打印到 stdout。"""
+    print("── 锄大地 ──")
+    for number, title, desc in _FIGHT_MENU_ITEMS:
+        suffix = ""
+        if number == "1":
+            suffix = f"（当前：{'开' if bool(_read_current_fight_value('fight_enable')) else '关'}）"
+        elif number == "2":
+            suffix = f"（当前：{_format_fight_map_version_for_display('fight_map_version')}）"
+        elif number == "3":
+            suffix = f"（当前：{_format_fight_main_map_for_display('fight_main_map')}）"
+        elif number == "4":
+            suffix = f"（当前：{_format_fight_int_for_display('fight_timeout')} 小时）"
+        elif number == "5":
+            suffix = f"（当前：{_format_fight_bool_for_display('fight_team_enable')}）"
+        elif number == "6":
+            suffix = f"（当前：{_format_fight_int_for_display('fight_team_number')}）"
+        elif number == "7":
+            suffix = f"（当前：{_format_fight_bool_for_display('fight_reward_enable')}）"
+        elif number == "8":
+            suffix = f"（当前：{_format_fight_bool_for_display('fight_allow_map_buy')}）"
+        elif number == "9":
+            suffix = f"（当前：{_format_fight_bool_for_display('fight_allow_snack_buy')}）"
+        elif number == "10":
+            suffix = f"（当前：{_format_fight_bool_for_display('fight_allow_memory_token')}）"
+        elif number == "12":
+            suffix = f"（当前：{_read_current_fight_value('fight_start_map') or '自动'}）"
+        elif number == "13":
+            suffix = f"（当前：{_format_fight_bool_for_display('fight_single_map')}）"
+        line = f"  {number}. {title}"
+        if suffix:
+            line += f" {suffix}"
+        if desc:
+            line += f"\n      {desc}"
+        print(line)
+    print("  0. 返回")
+
+
+def action_fight_settings() -> int:
+    """「设置 → 锄大地」子菜单：循环展示 13 个独立设置项，``0``/``b`` 返回。
+
+    每一项都是一个独立子动作：用户在子动作中再次输入 ``0``/``b`` 只退出
+    当前子动作回到本菜单，不会写入任何 config.yaml。本菜单本身则需要
+    显式输入 ``0``（或 ``b``）才退出，避免与子动作里的「布尔开关为假」
+    混淆。
+    """
+    while True:
+        try:
+            _render_fight_submenu()
+            raw = _prompt("请选择（0 或 b 返回设置主菜单）", default="0")
+        except _BackSignal:
+            return EXIT_OK
+        if raw.lower() in {"0", "b", "back"}:
+            return EXIT_OK
+        action = _FIGHT_SUB_ACTIONS.get(raw)
+        if action is None:
+            print(f"  ! 无效输入：{raw!r}")
+            continue
+        action()
+        # 子动作通过 _BackSignal / 显式判断已处理「返回」；不修改任何
+        # 全局状态，自然落回循环顶部继续显示本菜单。
+
+
 def action_general_settings() -> int:
     """常规设置：重新运行首次配置问答。"""
     try:
@@ -756,11 +1253,12 @@ def action_general_settings() -> int:
 
 
 def action_settings() -> int:
-    """菜单 3：设置子菜单（循环），内含常规设置与云游戏画质两项。"""
+    """菜单 3：设置子菜单（循环），内含常规设置、云游戏画质与锄大地三项。"""
     while True:
         print("── 运行设置 ──")
         print("  1. 重新配置常规设置")
         print("  2. 云游戏画质")
+        print("  3. 锄大地")
         print("  0. 返回")
         raw = _prompt("请选择（0 返回主菜单）", default="0")
         if raw.lower() in {"0", "b", "back"}:
@@ -769,6 +1267,8 @@ def action_settings() -> int:
             action_general_settings()
         elif raw == "2":
             _action_cloud_game_video_quality()
+        elif raw == "3":
+            action_fight_settings()
         else:
             print(f"  ! 无效输入：{raw!r}")
 

@@ -28,6 +28,7 @@ AVAILABLE_TASKS = {
     "currencywarstemp": "货币战争中途接管",
     "divergentloop": "差分宇宙循环",
     "divergenttemp": "差分宇宙中途接管",
+    "fight": "锄大地",
     "notify": "测试消息推送",
     "redemption": "兑换码",
     "screen_test": "界面可切换性测试",

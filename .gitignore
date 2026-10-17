@@ -219,3 +219,6 @@ CLAUDE.md
 telemetry_server/
 # Terminal runtime
 .terminal_runner.lock
+
+# Native cloud overworld engine snapshots
+/3rdparty/Fhoe-Rail-cloud/

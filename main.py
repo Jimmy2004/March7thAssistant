@@ -146,7 +146,6 @@ if TERMINAL_MODE:
         "check_update": False,
         "auto_update": False,
         "universe_enable": False,
-        "fight_enable": False,
         "telemetry_enable": False,
     })
 from module.logger import log

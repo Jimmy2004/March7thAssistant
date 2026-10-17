@@ -77,6 +77,7 @@ _TASKS_DENY: Final[frozenset[str]] = frozenset({
     "tasks/tool/__init__.py",
     "tasks/tool/autoplot/_engine.py",
     "tasks/base/tasks.py",
+    "tasks/daily/fight.py",
     "tasks/tool/autoplot/terminal.py",
     "tasks/tool/autoplot/__init__.py",
 })

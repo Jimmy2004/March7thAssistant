@@ -278,6 +278,9 @@ fight_allow_snack_buy: 不配置 # 每日获得特殊物品：购买秘技零食
 fight_allow_memory_token: 不配置 # 每周获得特殊物品：获得翁法罗斯记忆代币
 fight_reward_enable: false # 是否启用「特殊物品领取」。true 开启，false 关闭；关闭时不向锄大地写入上面三项。
 fight_main_map: "0" # 优先星球 {"空间站": "1", "雅利洛": "2", "仙舟": "3", "匹诺康尼": "4", "翁法罗斯": "5"}, "不配置": "0"
+fight_start_map: "" # 云游戏锄大地起始地图，留空自动选择；例如 1-1_0
+fight_single_map: false # 云游戏锄大地是否只运行起始地图
+fight_map_timeout: 900 # 云游戏锄大地单图最大时长（秒），超时失败
 fight_map_version: 不配置 # 地图版本，可选值：不配置、default（默认，疾跑）、HuangQuan（黄泉专用）或 reward（获得特殊物品）
 
 # Genshin_StarRail_fps_unlocker 配置
