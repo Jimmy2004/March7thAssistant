@@ -73,6 +73,22 @@ python terminal.py --task daily --schedule 08:00,20:00
 
 定时运行需要终端进程保持运行、Mac 保持唤醒。锁屏与休眠不同：真实休眠期间无法执行任务。错过的多个时间点不会密集补跑。每次任务结束或重试耗尽后关闭本项目云游戏浏览器；等待下次计划时不占用游戏会话。不会关闭普通 Chrome 窗口。
 
+### 差分宇宙循环
+
+选择 **1 执行一次 → 15 差分宇宙循环**，或直接运行：
+
+```sh
+march7th --task divergentloop
+
+# 显示浏览器调试
+march7th --task divergentloop --debug
+
+# 从源码目录运行
+python terminal.py --task divergentloop
+```
+
+每轮完成后自动开始下一轮，不设次数上限。按 **Ctrl+C** 停止并关闭项目专用云游戏浏览器。某轮失败时，按运行设置中的重试次数重新启动；重试耗尽后停止并关闭游戏。原有「差分宇宙」仍只执行一轮。
+
 `config.yaml` 保存任务参数；`settings/terminal.json` 保存终端偏好和计划。任务菜单还提供自动剧情和保存云游戏截图。需要细调体力、队伍、奖励和推送时，可按 `assets/config/config.example.yaml` 的注释修改 `config.yaml`。默认禁止使用付费时长。
 
 ## 更新

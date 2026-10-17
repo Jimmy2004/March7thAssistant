@@ -240,6 +240,8 @@ def run_sub_task(action):
             except Exception:
                 telemetry.track_task_complete(task_id, False, time.time() - task_start_time)
                 raise
+            if not success:
+                raise RuntimeError(f"任务未完成: {task_id}")
 
     def currencywars(mode=None):
         war = CurrencyWars()

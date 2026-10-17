@@ -64,6 +64,7 @@ TASK_CHOICES: tuple[str, ...] = (
     "autoplot",
     "screenshot",
     "fight",
+    "divergentloop",
 )
 
 # 强制写入 config.yaml 的云游戏相关字段，确保终端配置始终可用。
