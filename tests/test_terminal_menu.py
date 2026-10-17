@@ -112,6 +112,9 @@ def isolated_paths(monkeypatch, tmp_path: Path) -> dict[str, Path]:
     * ``APP_ROOT`` → ``tmp_path``
     * ``EXAMPLE_CONFIG`` 拷贝一份 ``config.example.yaml`` 进去
     * 清空全局状态，避免测试间互相污染
+    * 默认禁用 ``check_updates``，防止真实网络请求或意外的 backend 加载。
+      专门验证更新路径的测试不应依赖此 fixture，应自行接管 ``check_updates``
+      或向 ``sys.modules`` 注入 ``module.update.upstream_sync`` stub。
     """
     example_src = PROJECT_ROOT / "assets" / "config" / "config.example.yaml"
     example_dst = tmp_path / "assets" / "config" / "config.example.yaml"
@@ -123,6 +126,8 @@ def isolated_paths(monkeypatch, tmp_path: Path) -> dict[str, Path]:
     monkeypatch.setattr(terminal, "CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr(terminal, "SETTINGS_DIR", tmp_path / "settings")
     monkeypatch.setattr(terminal, "TERMINAL_SETTINGS_PATH", tmp_path / "settings" / "terminal.json")
+    # 防止任何测试意外触发真实 upstream 检查；返回 False 视作「无更新、不阻塞」。
+    monkeypatch.setattr(terminal, "check_updates", lambda interactive=True: False)
 
     return {
         "root": tmp_path,

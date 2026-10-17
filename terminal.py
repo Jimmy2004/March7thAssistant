@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import platform
@@ -487,7 +488,127 @@ MENU_ITEMS: tuple[tuple[str, str], ...] = (
     ("4", "调试运行（仅本次显示浏览器窗口）"),
     ("5", "显示当前配置和计划"),
     ("6", "退出"),
+    ("7", "检查更新"),
 )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 更新检查（lazy import module.update.upstream_sync）
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class UpdateStartupBlocked(RuntimeError):
+    """An incomplete update needs recovery before tasks can run."""
+
+
+def _load_upstream_sync() -> Any:
+    """延迟导入 ``module.update.upstream_sync``。
+
+    后台模块与具体实现由主代理负责；本前端只做薄包装。模块暂时不存在时
+    返回 ``None``，调用方会把它当作「未启用」并静默跳过。
+    """
+    try:
+        return importlib.import_module("module.update.upstream_sync")
+    except Exception as exc:
+        print(f"检查更新模块无法加载：{exc}", file=sys.stderr)
+        return None
+
+
+def check_updates(interactive: bool = True) -> bool:
+    """启动时检查上游更新。
+
+    行为契约：
+        * 已最新或有新上游：提示 ``local=X / target=Y``（或「已是最新」）；
+          在交互式下询问是否下载并合并（``Y/N``，默认 ``N``，``0``/``b``
+          视为取消），只有 ``y``/``yes`` 才调用 ``apply_update``。
+        * 非交互式 + 有更新：只提示 ``python terminal.py --check-update``，
+          不自动下载、不退出，调用方可继续正常流程。
+        * 网络/导入失败：打印错误，**不抛异常** 返回 ``False``。
+        * 成功应用：打印合并/忽略文件数、备份目录，提示用户重启终端
+          以避免同进程混入新旧代码，**返回 ``True``**（让上层决定退出）。
+        * 未应用（已是最新 / 用户拒绝 / 非交互）：**返回 ``False``**。
+
+    测试可通过 ``monkeypatch.setattr(terminal, "check_updates", ...)``
+    整体替换；也可通过向 ``sys.modules["module.update.upstream_sync"]``
+    注入 stub 来验证内部逻辑分支。
+    """
+    sync_mod = _load_upstream_sync()
+    if sync_mod is None or not hasattr(sync_mod, "check_for_updates"):
+        # 后台模块未就绪 → 不阻塞启动。
+        return False
+
+    print("正在检查上游源码更新...")
+    try:
+        info = sync_mod.check_for_updates(APP_ROOT)
+    except KeyboardInterrupt:
+        print("已取消更新检查。")
+        return False
+    except Exception as exc:  # 网络或解析错误
+        print(f"  ! 检查更新失败：{exc}", file=sys.stderr)
+        if isinstance(exc, getattr(sync_mod, "UpdateRecoveryError", ())):
+            raise UpdateStartupBlocked(str(exc)) from exc
+        return False
+
+    available = bool(getattr(info, "available", False))
+    baseline = str(getattr(info, "baseline", ""))
+    target = str(getattr(info, "target", ""))
+
+    if not available:
+        print(
+            f"  已是最新（local={baseline or '?'}，target={target or '?'}）。"
+            if baseline or target
+            else "  已是最新。"
+        )
+        return False
+
+    print(f"  发现上游新提交：local={baseline} → target={target}。")
+
+    if not interactive:
+        # 非交互：仅提示，不下载也不退出。
+        print(
+            "  检测到非交互模式，自动跳过下载。\n"
+            "  请手动执行：python terminal.py --check-update"
+        )
+        return False
+
+    while True:
+        try:
+            answer = _prompt(
+                "是否下载并合并上游更新？(Y/N，默认 N，0/b 返回)", default="N"
+            ).lower()
+        except (_BackSignal, _CancelledSignal, KeyboardInterrupt):
+            print("已取消更新检查。")
+            return False
+        if answer in {"n", "no", "0", "b", "back"}:
+            print("已跳过更新。")
+            return False
+        if answer in {"y", "yes"}:
+            break
+        print("请输入 Y 或 N（0/b 返回）。")
+
+    try:
+        result = sync_mod.apply_update(info, APP_ROOT)
+    except Exception as exc:
+        print(f"  ! 应用更新失败：{exc}", file=sys.stderr)
+        if isinstance(exc, getattr(sync_mod, "UpdateRecoveryError", ())):
+            raise UpdateStartupBlocked(str(exc)) from exc
+        return False
+    except KeyboardInterrupt:
+        print("更新已取消，项目已恢复。")
+        return False
+
+    changed = int(getattr(result, "changed", 0))
+    ignored = int(getattr(result, "ignored", 0))
+    backup = str(getattr(result, "backup_dir", ""))
+    print(
+        f"  更新完成：合并 {changed} 个文件，忽略 {ignored} 个。"
+        f"\n  备份目录：{backup}"
+        f"\n  请重启终端前端以加载新代码（本进程即将退出）。"
+    )
+    return True
+
+
+
 
 
 def print_main_menu() -> None:
@@ -748,8 +869,15 @@ def main_loop(debug: bool, retries: int) -> int:
                 action_debug_run(retries)
             elif choice == "5":
                 action_show_state()
+            elif choice == "7":
+                # 菜单 7：手动触发更新检查。成功应用 → EXIT_OK，提示重启。
+                if check_updates(interactive=True):
+                    return EXIT_OK
             else:
                 print(f"  ! 未知选项：{choice!r}")
+        except UpdateStartupBlocked:
+            print("未完成更新尚未恢复，停止运行。", file=sys.stderr)
+            return EXIT_RUNTIME
         except (_CancelledSignal, EOFError):
             return EXIT_OK
         except KeyboardInterrupt:
@@ -781,6 +909,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--schedule",
         help="非交互：保存并启动每日计划，格式 HH:MM[,HH:MM...]，需配合 --task 使用",
+    )
+    parser.add_argument(
+        "--check-update",
+        action="store_true",
+        help="独立模式：检查上游更新；可交互询问是否应用，成功应用后退出。",
     )
     return parser
 
@@ -821,8 +954,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # --list 在解析后单独处理（不动用平台检查）。
     if args.list:
-        for name in TASK_CHOICES:
-            print(f"- {name}")
+        # 主菜单里的「7. 检查更新」也属于终端入口，在 --list 中单独列出一行。
+        print("- " + "\n- ".join(TASK_CHOICES))
+        print("- 7  检查更新（独立命令：python terminal.py --check-update）")
         return EXIT_OK
 
     # 运行前检查：Darwin + arm64。
@@ -837,6 +971,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_PLATFORM
 
     settings = _load_terminal_settings()
+
+    # Check before configuration questions or launching any game task.
+    try:
+        if args.check_update:
+            check_updates(interactive=True)
+            return EXIT_OK
+        if check_updates(interactive=bool(sys.stdin.isatty())):
+            return EXIT_OK
+    except UpdateStartupBlocked:
+        print("未完成更新尚未恢复，停止启动。", file=sys.stderr)
+        return EXIT_RUNTIME
 
     # ── 非交互路径 ────────────────────────────────────────────────────────
     if args.task is not None:

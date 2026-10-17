@@ -75,7 +75,12 @@ def fake_runner(monkeypatch):
 
 @pytest.fixture
 def isolated_paths(monkeypatch, tmp_path: Path) -> dict[str, Path]:
-    """把所有 I/O 隔离到临时目录。"""
+    """把所有 I/O 隔离到临时目录。
+
+    同时把 ``terminal.check_updates`` 替换为无害 stub，避免任何测试触发
+    真实网络或意外的 backend 加载。专门验证更新路径的测试不应复用此
+    fixture（应自行接管 ``check_updates``）。
+    """
     example_src = PROJECT_ROOT / "assets" / "config" / "config.example.yaml"
     example_dst = tmp_path / "assets" / "config" / "config.example.yaml"
     example_dst.parent.mkdir(parents=True, exist_ok=True)
@@ -88,6 +93,7 @@ def isolated_paths(monkeypatch, tmp_path: Path) -> dict[str, Path]:
     monkeypatch.setattr(
         terminal, "TERMINAL_SETTINGS_PATH", tmp_path / "settings" / "terminal.json"
     )
+    monkeypatch.setattr(terminal, "check_updates", lambda interactive=True: False)
 
     return {
         "root": tmp_path,
