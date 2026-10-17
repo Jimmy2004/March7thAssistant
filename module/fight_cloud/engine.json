@@ -1,0 +1,7 @@
+{
+  "repository": "linruowuyin/Fhoe-Rail",
+  "revision": "86cea0f01dc70c3ff597a2ad45907cb44624586f",
+  "sha256": "8b9cb906ab6448acda12a8f01e36c3755c47fd14d3dd40adf3243d48ed19f6c9",
+  "license": "GPL-3.0",
+  "route_versions": ["default", "default_lite", "HuangQuan", "technique", "reward"]
+}

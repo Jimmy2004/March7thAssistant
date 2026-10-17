@@ -34,7 +34,8 @@ def is_docker_started():
 
 def should_skip_pause():
     """检查是否应该跳过暂停（GUI或Docker启动时跳过）"""
-    return is_gui_started() or is_docker_started()
+    return (os.environ.get("MARCH7TH_TERMINAL") == "1"
+            or is_gui_started() or is_docker_started())
 
 
 def pause_on_error():

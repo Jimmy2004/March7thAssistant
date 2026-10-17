@@ -1,0 +1,21 @@
+# Apple Silicon CLI runtime: no Qt, desktop input, or Windows packages.
+ruamel.yaml==0.19.1
+playsound3==3.3.1
+psutil==7.2.2
+requests[socks]==2.34.2
+charset_normalizer==3.4.7
+Pillow==12.3.0
+numpy==2.4.6
+opencv-python==4.13.0.92
+qrcode==8.2
+PySocks==1.7.1
+PyPAC==0.18.3
+py7zr==1.1.3
+matrix-nio==0.25.2
+python-socks[asyncio]==2.8.1
+openpyxl==3.1.5
+selenium==4.44.0
+websocket-client==1.9.0
+opencc==1.3.1
+rapidocr==3.8.1
+onnxruntime==1.26.0

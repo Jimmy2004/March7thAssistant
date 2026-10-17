@@ -64,7 +64,7 @@ cloud_game_fullscreen_enable: True # 云崩铁是否全屏运行
 cloud_game_use_paid_time: False # 是否使用付费时长
 cloud_game_max_queue_time: 60 # 最大排队等待时间（分钟）
 cloud_game_login_timeout: 20 # 等待登录的超时时间（分钟），超时后终止运行
-# cloud_game_video_quality: '0' # 云崩铁画质 '0'(超高清)，'1'（高清）, '2'（标清）, '3'（低清）
+cloud_game_video_quality: high # 高画质 high / 省流画质 traffic_saving / 极致省流 extreme_saving
 # cloud_game_smooth_first_enable: False # 是否流畅优先
 # cloud_game_status_bar_enable: False # 是否显示网速
 # cloud_game_status_bar_type: "verbose" # 网速显示类型，可选值 "verbose" (详细), "brief" （简洁）
@@ -79,7 +79,7 @@ browser_headless_enable: False # 是否启用无窗口模式。
 browser_headless_restart_on_not_logged_in: True # 无窗口模式下若未登录，是否自动以有窗口模式重启浏览器以便登录。
 browser_dump_cookies_enable: False # （用于调试）是否转储 Cookies
 browser_persistent_enable: True # 是否允许浏览器保存数据（登录状态/游戏本地数据）
-browser_scale_factor: 1.0 # 浏览器的缩放比，如果云游戏画面过小/过大，可调整这个选项
+browser_scale_factor: 1.0 # 兼容旧配置；运行时固定为 1，游戏有效画面固定 1920×1080
 browser_launch_argument: [] # 浏览器启动的额外参数，如 "--auto-open-devtools-for-tabs"
 browser_debug_port: 9222 # 浏览器 Debug 端口，应确保该端口不被占用
 browser_download_use_mirror: True # 是否使用镜像下载浏览器和驱动
@@ -278,6 +278,9 @@ fight_allow_snack_buy: 不配置 # 每日获得特殊物品：购买秘技零食
 fight_allow_memory_token: 不配置 # 每周获得特殊物品：获得翁法罗斯记忆代币
 fight_reward_enable: false # 是否启用「特殊物品领取」。true 开启，false 关闭；关闭时不向锄大地写入上面三项。
 fight_main_map: "0" # 优先星球 {"空间站": "1", "雅利洛": "2", "仙舟": "3", "匹诺康尼": "4", "翁法罗斯": "5"}, "不配置": "0"
+fight_start_map: "" # 云游戏锄大地起始地图，留空自动选择；例如 1-1_0
+fight_single_map: false # 云游戏锄大地是否只运行起始地图
+fight_map_timeout: 900 # 云游戏锄大地单图最大时长（秒），超时失败
 fight_map_version: 不配置 # 地图版本，可选值：不配置、default（默认，疾跑）、HuangQuan（黄泉专用）或 reward（获得特殊物品）
 
 # Genshin_StarRail_fps_unlocker 配置

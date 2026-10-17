@@ -110,6 +110,8 @@ class TestOCRReplaceStrings:
 class TestDisableOpenVINOTelemetry:
     def test_disable_openvino_telemetry_does_not_create_consent_files(self, monkeypatch, tmp_path):
         from unittest.mock import MagicMock
+        import pytest
+        pytest.importorskip("openvino_telemetry", reason="Mac CLI uses ONNXRuntime")
         from openvino_telemetry.utils.opt_in_checker import ConsentCheckResult, OptInChecker
 
         original_check = OptInChecker.check

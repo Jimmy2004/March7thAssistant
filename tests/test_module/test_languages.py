@@ -19,7 +19,8 @@ class TestLangsRegistry:
         assert set(LANGS) == {"zh_CN", "zh_TW", "ja_JP", "ko_KR", "en_US"}
 
     def test_qlocale_matches_qt_enums(self):
-        PySide6 = __import__("importlib").import_module("PySide6.QtCore")
+        import pytest
+        PySide6 = pytest.importorskip("PySide6.QtCore", reason="CLI does not include Qt")
         QLocale = PySide6.QLocale
         for code, meta in LANGS.items():
             lang, country = meta["qlocale"]

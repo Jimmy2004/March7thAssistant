@@ -31,7 +31,7 @@ from module.game.base import GameControllerBase
 from module.logger import Logger
 # from utils.encryption import wdp_encrypt, wdp_decrypt
 
-from utils.console import is_docker_started
+from utils.console import is_docker_started, is_gui_started
 
 
 class CloudGameLoginTimeoutError(RuntimeError):
@@ -173,16 +173,63 @@ class CloudGameController(GameControllerBase):
 
         raise ConnectionError("页面加载失败，多次刷新无效。")
 
+    VIEWPORT_WIDTH = 1920
+    VIEWPORT_HEIGHT = 1080
+    GRAPHICS_CONFIG_KEY = "clgm_web_app_settings_hkrpg_cn"
+
     def _confirm_viewport_resolution(self) -> None:
-        """
-        设置网页分辨率大小
-        """
+        """Lock CSS viewport, DPR and page scale independently of the desktop."""
         self.driver.execute_cdp_cmd("Emulation.setDeviceMetricsOverride", {
-            "width": 1920,
-            "height": 1080,
+            "width": self.VIEWPORT_WIDTH,
+            "height": self.VIEWPORT_HEIGHT,
+            "screenWidth": self.VIEWPORT_WIDTH,
+            "screenHeight": self.VIEWPORT_HEIGHT,
             "deviceScaleFactor": 1,
-            "mobile": False
+            "mobile": False,
         })
+        self.driver.execute_cdp_cmd("Emulation.setPageScaleFactor", {"pageScaleFactor": 1})
+
+    def _apply_cloud_game_settings(self) -> bool:
+        """Persist graphics mode before the web app initializes its player.
+
+        Existing profile preferences are merged, never replaced by presets.
+        Returning True means an existing document needs one refresh to load it.
+        """
+        from utils.cloud_quality import graphics_mode, quality_label
+        quality = self.cfg.get_value("cloud_game_video_quality", "high")
+        mode = graphics_mode(quality)
+        source = """
+            (() => {
+                if (location.origin !== 'https://sr.mihoyo.com') return false;
+                const key = %s;
+                let config;
+                try { config = JSON.parse(localStorage.getItem(key) || '{}'); }
+                catch (e) { throw new Error('云游戏画质配置损坏，请检查专用浏览器资料'); }
+                if (!config || typeof config !== 'object' || Array.isArray(config)) {
+                    throw new Error('云游戏客户端配置不是对象');
+                }
+                const graphicsMode = %s;
+                const changed = config.graphicsMode !== graphicsMode;
+                config.graphicsMode = graphicsMode;
+                localStorage.setItem(key, JSON.stringify(config));
+                return changed;
+            })()
+        """ % (json.dumps(self.GRAPHICS_CONFIG_KEY), json.dumps(mode))
+        # Run before application JS on every subsequent reload/navigation.
+        previous = getattr(self, "_quality_script_id", None)
+        if previous:
+            self.driver.execute_cdp_cmd("Page.removeScriptToEvaluateOnNewDocument", {"identifier": previous})
+        registered = self.driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {"source": source})
+        self._quality_script_id = registered.get("identifier")
+        changed = self.driver.execute_script("return " + source.strip())
+        stored = self.driver.execute_script(
+            "return JSON.parse(localStorage.getItem(arguments[0]) || '{}').graphicsMode;",
+            self.GRAPHICS_CONFIG_KEY,
+        )
+        if type(stored) is not int or stored != mode:
+            raise RuntimeError("云游戏画质设置未保存，停止启动以避免使用错误档位")
+        self.log_info(f"云游戏画质已设为{quality_label(quality)}，游戏画面固定 1920×1080")
+        return bool(changed)
 
     def _configure_pointer_lock(self, headless: bool) -> None:
         """无窗口运行时禁止网页锁定系统鼠标指针。"""
@@ -317,7 +364,7 @@ class CloudGameController(GameControllerBase):
             "--disable-infobars",   # 去掉提示 "Chrome测试版仅适用于自动测试。" 和 "浏览器正由自动测试软件控制。"
             "--lang=zh-CN",     # 浏览器语言中文
             "--log-level=3",    # 浏览器日志等级为error
-            f"--force-device-scale-factor={float(self.cfg.browser_scale_factor)}",  # 设置缩放
+            "--force-device-scale-factor=1",  # 设置缩放
             f"--app={self.GAME_URL}",   # 以应用模式启动
             "--disable-blink-features=AutomationControlled",  # 去除自动化痕迹，防止被人机验证
         ]
@@ -340,7 +387,11 @@ class CloudGameController(GameControllerBase):
 
         if self.cfg.cloud_game_fullscreen_enable and not headless:
             args.append("--start-fullscreen")  # 全屏启动
-        args.extend(self.cfg.browser_launch_argument)  # 用户自定义参数
+        # Geometry flags are owned by the controller, not host/profile overrides.
+        blocked = ("--force-device-scale-factor", "--window-size", "--device-scale-factor")
+        args.extend(arg for arg in self.cfg.browser_launch_argument
+                    if not any(arg.split("=", 1)[0] == flag for flag in blocked))
+        args.append("--window-size=1920,1080")
         return args
 
     def _connect_or_create_browser(self, headless=False) -> None:
@@ -401,6 +452,9 @@ class CloudGameController(GameControllerBase):
                 options.debugger_address = f"127.0.0.1:{reconnect_port}"
                 self.driver = webdriver_type(service=service, options=options)
                 self._configure_pointer_lock(headless)
+                self._confirm_viewport_resolution()
+                if self._apply_cloud_game_settings():
+                    self._refresh_page()
                 self.log_info("已连接到现有浏览器")
                 return
             except Exception:
@@ -442,6 +496,7 @@ class CloudGameController(GameControllerBase):
         try:
             self.log_debug("启动浏览器中...")
             self.driver = webdriver_type(service=service, options=options)
+            self._quality_script_id = None
             self.log_debug("浏览器启动成功")
         except SessionNotCreatedException as e:
             self.log_error(f"浏览器启动失败: {e}")
@@ -464,6 +519,7 @@ class CloudGameController(GameControllerBase):
             raise RuntimeError("浏览器启动失败")
 
         self._configure_pointer_lock(headless)
+        self._confirm_viewport_resolution()
         if not self.cfg.cloud_game_fullscreen_enable:
             self.driver.set_window_size(1920, 1120)
         if first_run or not self.cfg.browser_persistent_enable:
@@ -472,6 +528,7 @@ class CloudGameController(GameControllerBase):
             self.change_auto_battle(True)
         if self.cfg.browser_dump_cookies_enable:
             self._load_cookies()
+        self._apply_cloud_game_settings()
         self._refresh_page()
 
     def _restart_browser(self, headless=False) -> None:
@@ -485,19 +542,6 @@ class CloudGameController(GameControllerBase):
         try:
             with open("assets/config/initial_local_storage.json", "r", encoding="utf-8") as f:
                 data = json.load(f)
-
-            # settings = json.loads(data["clgm_web_app_settings_hkrpg_cn"])
-            # settings["videoMode"] = self.cfg.cloud_game_smooth_first_enable if 1 else 0
-            # data["clgm_web_app_settings_hkrpg_cn"] = json.dumps(settings)
-
-            # client_config = json.loads(data["clgm_web_app_client_store_config_hkrpg_cn"])
-            # client_config["speedLimitGearId"] = self.cfg.cloud_game_video_quality
-            # client_config["fabPosition"]["x"] = self.cfg.cloud_game_fab_pos_x
-            # client_config["fabPosition"]["y"] = self.cfg.cloud_game_fab_pos_y
-            # client_config["showGameStatBar"] = self.cfg.cloud_game_status_bar_enable
-            # client_config["gameStatBarType"] = self.cfg.cloud_game_status_bar_type
-            # client_config["volume"] = self.cfg.browser_headless_enable if 0 else 1
-            # data["clgm_web_app_client_store_config_hkrpg_cn"] = json.dumps(client_config)
 
             # 注入浏览器
             for key, value in data.items():
@@ -1098,9 +1142,13 @@ class CloudGameController(GameControllerBase):
             data, points, _ = detector.detectAndDecode(img)
 
             if data:
-                self.log_info("二维码内容：")
-                self.log_info(data)
-                self.log_info("提示：你也可以将该内容自行生成二维码后再扫码登录。")
+                # 不再通过 log_info 写出原始登录链接，避免进入日志文件；
+                # 仅在终端模式下渲染二维码，便于用户直接扫码登录。
+                try:
+                    self._render_qr_to_terminal(data)
+                except Exception as render_err:
+                    self.log_debug(f"渲染终端二维码失败: {render_err}")
+                self.log_info("提示：你也可以将终端二维码截图后用其它设备扫码登录，或自行生码后再登录。")
 
                 # 发送二维码登录通知
                 try:
@@ -1112,6 +1160,72 @@ class CloudGameController(GameControllerBase):
 
         except Exception as e:
             self.log_warning(f"解析二维码内容失败: {e}")
+
+    @staticmethod
+    def _terminal_qr_explicitly_requested() -> bool:
+        """Whether the caller opted in to terminal QR rendering.
+
+        The GUI launcher sets ``MARCH7TH_GUI_STARTED=true`` to suppress
+        post-run pauses, but it still wants the QR rendered when the
+        underlying process is a terminal (``MARCH7TH_TERMINAL=1``).
+        This mirrors the tolerant reader style used elsewhere in the
+        codebase.
+        """
+        return os.environ.get("MARCH7TH_TERMINAL", "").lower() in (
+            "true", "1", "yes", "on"
+        )
+
+    def _render_qr_to_terminal(self, qr_data: str) -> bool:
+        """把解码出的登录内容渲染成终端二维码并直接写出。
+
+        - Docker 启动时不渲染（通常无交互终端）
+        - GUI 启动时不渲染，但 ``MARCH7TH_TERMINAL=1`` 可以覆盖：终端
+          运行器会设置 ``MARCH7TH_GUI_STARTED=true`` 抑制暂停，但仍需要
+          在终端里展示二维码
+        - stdout 是 TTY 时用半块+ANSI，否则回退成 ASCII
+        - 正常模式（普通终端）下不打开浏览器窗口作为备用方案
+        - 不会把登录链接写进日志
+        - 终端过窄时拒绝渲染并提示用户拉宽窗口（不输出坏掉的二维码）
+        """
+        from utils.terminal_qr import (
+            TerminalTooNarrowError,
+            render_qr_terminal,
+        )
+
+        if is_docker_started():
+            return False
+        if is_gui_started() and not self._terminal_qr_explicitly_requested():
+            return False
+        if not qr_data:
+            return False
+
+        try:
+            text, _ = render_qr_terminal(qr_data, stream=sys.stdout)
+        except TerminalTooNarrowError as narrow_err:
+            # 渲染失败只提示用户拉宽终端；绝不打印登录链接。
+            self.log_warning(
+                "终端窗口过窄，无法直接渲染二维码（" + str(narrow_err) + "）。"
+                "请拉宽终端窗口后重新触发登录，或在 logs/qrcode_login.png 查看图片。"
+            )
+            return False
+        except Exception as render_err:
+            self.log_debug(f"渲染终端二维码失败: {render_err}")
+            return False
+
+        # 正常模式（普通 CLI）下绝不打开浏览器窗口作为回退；
+        # 仅在终端直接输出二维码。
+        sep = "\n"
+        try:
+            sys.stdout.write(sep)
+            sys.stdout.write(text)
+            sys.stdout.write(sep)
+            sys.stdout.flush()
+        except Exception as write_err:
+            self.log_debug(f"写入终端二维码失败: {write_err}")
+            return False
+
+        self.log_info("终端二维码已写入，请用米游社 APP 扫描登录")
+        return True
 
     def _wait_scan_success_with_refresh(self, qr_filename: str, login_deadline: float = None, timeout_seconds: int = None) -> None:
         import os
@@ -1229,41 +1343,66 @@ class CloudGameController(GameControllerBase):
         return any(element.is_displayed() for element in
                    self.driver.find_elements(By.CSS_SELECTOR, ".game-player"))
 
+    def _show_browser_qr_login(self) -> None:
+        """Show the official QR in the temporary login window."""
+        try:
+            self._switch_to_login_iframe()
+            if not any(image.is_displayed() for image in
+                       self.driver.find_elements(By.CSS_SELECTOR, "img.qr-loaded")):
+                self._click_qr_login_button()
+            WebDriverWait(self.driver, 10).until(
+                EC.visibility_of_element_located((By.CSS_SELECTOR, "img.qr-loaded")))
+        except TimeoutException:
+            self.log_warning("二维码未自动显示，请在浏览器中选择「扫码登录」")
+        finally:
+            self.driver.switch_to.default_content()
+
+    def _ensure_cloud_login(self) -> None:
+        if self._check_login():
+            return
+        seconds = self._get_login_timeout_seconds()
+        deadline = time.monotonic() + seconds
+        temporary_window = self.cfg.browser_headless_enable and (
+            self.cfg.browser_headless_restart_on_not_logged_in
+            or os.environ.get("MARCH7TH_TERMINAL", "").lower() in {"1", "true", "yes", "on"})
+        try:
+            if temporary_window:
+                if not self.cfg.browser_persistent_enable:
+                    raise RuntimeError("扫码登录后返回后台需要启用浏览器登录状态保存")
+                self.log_info("需要登录，正在打开浏览器，请用米游社扫描网页二维码并在手机上确认")
+                self._restart_browser(headless=False)
+                self._show_browser_qr_login()
+            elif not self.cfg.browser_headless_enable:
+                self._show_browser_qr_login()
+            else:
+                self._run_qr_login_flow(deadline, seconds)
+
+            self.log_info(f"等待手机确认登录，最长 {seconds // 60} 分钟")
+            while True:
+                self._check_login_timeout(deadline, seconds)
+                # Root-page account state means confirmation finished; scanning
+                # alone (iframe '扫码成功') must never close the login window.
+                if self._check_login():
+                    break
+                time.sleep(2)
+
+            if temporary_window:
+                self.log_info("登录成功，正在关闭登录窗口并返回无窗口模式")
+                self._restart_browser(headless=True)
+                self._check_login_timeout(deadline, seconds)
+                if not self._check_login(timeout=15):
+                    raise RuntimeError("登录状态未能保留，已停止任务，请重新登录")
+            else:
+                self.log_info("检测到登录成功")
+        except BaseException:
+            if temporary_window:
+                self.stop_game()
+            raise
+
     def enter_cloud_game(self) -> bool:
         """进入云游戏"""
         try:
-            # 检测登录状态
-            while not self._check_login():
-                login_timeout_seconds = self._get_login_timeout_seconds()
-                login_deadline = time.monotonic() + login_timeout_seconds
-                self.log_info("未登录")
-
-                # 如果是 headless 且配置了自动重启，则以非 headless 模式重启启动让用户登录
-                if self.cfg.browser_headless_enable and self.cfg.browser_headless_restart_on_not_logged_in:
-                    self.log_info("无窗口模式下检测到未登录，将以有窗口模式重启浏览器")
-                    self._restart_browser(headless=False)
-
-                # 如果是 headless 且配置了不重启，则尝试二维码登录
-                if self.cfg.browser_headless_enable and (not self.cfg.browser_headless_restart_on_not_logged_in):
-                    self._run_qr_login_flow(login_deadline, login_timeout_seconds)
-
-                self.log_info(f"请在浏览器中完成登录操作，超时时间：{login_timeout_seconds // 60} 分钟")
-
-                # 循环检测用户是否登录
-                while True:
-                    self._check_login_timeout(login_deadline, login_timeout_seconds)
-                    if self._check_login():
-                        break
-                    time.sleep(2)
-
-                self.log_info("检测到登录成功")
-
-                # 如果为 headless 模式，则重启浏览器回到 headless 模式
-                if self.cfg.browser_headless_enable and self.cfg.browser_headless_restart_on_not_logged_in:
-                    if self.cfg.browser_dump_cookies_enable:
-                        self._save_cookies()
-                    self.log_info("登录完成，将重启为无窗口模式")
-                    self._restart_browser(headless=True)
+            self._ensure_cloud_login()
 
             if self.cfg.browser_dump_cookies_enable:
                 self._save_cookies()
@@ -1565,6 +1704,7 @@ class CloudGameController(GameControllerBase):
         previous_timeout = client_config.timeout
         client_config.timeout = min(previous_timeout, 15) if previous_timeout is not None else 15
         try:
+            self._confirm_viewport_resolution()
             self._ensure_window_not_minimized_for_frame_capture()
             try:
                 result = self.driver.execute_cdp_cmd(

@@ -1,10 +1,11 @@
-"""
-自动对话模块。
-
-提供 AutoPlot 引擎。
-"""
-
-from ._engine import AutoPlot
+"""Cloud dialogue automation, without desktop GUI dependencies."""
 from ._config import EngineState
 
-__all__ = ["AutoPlot", "EngineState"]
+__all__ = ['EngineState', 'TerminalAutoplot']
+
+
+def __getattr__(name):
+    if name == 'TerminalAutoplot':
+        from .terminal import TerminalAutoplot
+        return TerminalAutoplot
+    raise AttributeError(name)

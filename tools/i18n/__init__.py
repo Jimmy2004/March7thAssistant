@@ -32,8 +32,8 @@ BASE_LOCALE = "zh_CN"
 LOCALES = ["zh_CN", "zh_TW", "ja_JP", "ko_KR", "en_US"]
 
 # 参与提取的源码目录/文件（tests、3rdparty 等不参与）
-SCAN_DIRS = ["app", "module", "tasks", "utils", "tools"]
-SCAN_FILES = ["main.py", "app.py", "updater.py", "build.py"]
+SCAN_DIRS = ["module", "tasks", "utils", "tools"]
+SCAN_FILES = ["main.py", "updater.py", "build.py"]
 
 # 视为翻译调用的函数名（含 self.tr(...) 形式）
 TRANSLATION_FUNCS = {"tr", "tn"}
@@ -241,10 +241,6 @@ TABLE_SOURCES = [
     ("module/update/version_check.py", (("_CDK_ERROR_MESSAGES", None),)),
     # 任务名与主页卡片文案：常量里存的是中文原文（msgid），显示时才 tr()
     ("utils/tasks.py", (("AVAILABLE_TASKS", None),)),
-    ("app/card/card_edit_dialog.py", (
-        ("HOME_EXTRA_TASKS", None),
-        ("DEFAULT_CARDS", ("title", "label", "menu_items")),
-    )),
 ]
 
 # 取值会经 tr() 传入的数据文件（display_name 等展示字段即 msgid）
