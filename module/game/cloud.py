@@ -173,16 +173,64 @@ class CloudGameController(GameControllerBase):
 
         raise ConnectionError("页面加载失败，多次刷新无效。")
 
+    VIEWPORT_WIDTH = 1920
+    VIEWPORT_HEIGHT = 1080
+    VIDEO_QUALITY_LABELS = {"0": "超高清", "1": "高清", "2": "标清", "3": "低清"}
+    CLIENT_CONFIG_KEY = "clgm_web_app_client_store_config_hkrpg_cn"
+
     def _confirm_viewport_resolution(self) -> None:
-        """
-        设置网页分辨率大小
-        """
+        """Lock CSS viewport, DPR and page scale independently of the desktop."""
         self.driver.execute_cdp_cmd("Emulation.setDeviceMetricsOverride", {
-            "width": 1920,
-            "height": 1080,
+            "width": self.VIEWPORT_WIDTH,
+            "height": self.VIEWPORT_HEIGHT,
+            "screenWidth": self.VIEWPORT_WIDTH,
+            "screenHeight": self.VIEWPORT_HEIGHT,
             "deviceScaleFactor": 1,
-            "mobile": False
+            "mobile": False,
         })
+        self.driver.execute_cdp_cmd("Emulation.setPageScaleFactor", {"pageScaleFactor": 1})
+
+    def _apply_cloud_game_settings(self) -> bool:
+        """Persist bitrate selection before the web app loads its player config.
+
+        Existing profile preferences are merged, never replaced by presets.
+        Returning True means an existing document needs one refresh to load it.
+        """
+        quality = str(self.cfg.get_value("cloud_game_video_quality", "0"))
+        if quality not in self.VIDEO_QUALITY_LABELS:
+            raise ValueError("云游戏画质配置无效，应为 0（超高清）、1（高清）、2（标清）或 3（低清）")
+        source = """
+            (() => {
+                if (location.origin !== 'https://sr.mihoyo.com') return false;
+                const key = %s;
+                let config;
+                try { config = JSON.parse(localStorage.getItem(key) || '{}'); }
+                catch (e) { throw new Error('云游戏画质配置损坏，请检查专用浏览器资料'); }
+                if (!config || typeof config !== 'object' || Array.isArray(config)) {
+                    throw new Error('云游戏客户端配置不是对象');
+                }
+                const quality = %s;
+                const changed = config.speedLimitGearId !== quality;
+                config.speedLimitGearId = quality;
+                localStorage.setItem(key, JSON.stringify(config));
+                return changed;
+            })()
+        """ % (json.dumps(self.CLIENT_CONFIG_KEY), json.dumps(quality))
+        # Run before application JS on every subsequent reload/navigation.
+        previous = getattr(self, "_quality_script_id", None)
+        if previous:
+            self.driver.execute_cdp_cmd("Page.removeScriptToEvaluateOnNewDocument", {"identifier": previous})
+        registered = self.driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {"source": source})
+        self._quality_script_id = registered.get("identifier")
+        changed = self.driver.execute_script("return " + source.strip())
+        stored = self.driver.execute_script(
+            "return JSON.parse(localStorage.getItem(arguments[0]) || '{}').speedLimitGearId;",
+            self.CLIENT_CONFIG_KEY,
+        )
+        if stored != quality:
+            raise RuntimeError("云游戏画质设置未保存，停止启动以避免使用错误档位")
+        self.log_info(f"云游戏画质已设为{self.VIDEO_QUALITY_LABELS[quality]}，游戏画面固定 1920×1080")
+        return bool(changed)
 
     def _configure_pointer_lock(self, headless: bool) -> None:
         """无窗口运行时禁止网页锁定系统鼠标指针。"""
@@ -317,7 +365,7 @@ class CloudGameController(GameControllerBase):
             "--disable-infobars",   # 去掉提示 "Chrome测试版仅适用于自动测试。" 和 "浏览器正由自动测试软件控制。"
             "--lang=zh-CN",     # 浏览器语言中文
             "--log-level=3",    # 浏览器日志等级为error
-            f"--force-device-scale-factor={float(self.cfg.browser_scale_factor)}",  # 设置缩放
+            "--force-device-scale-factor=1",  # 设置缩放
             f"--app={self.GAME_URL}",   # 以应用模式启动
             "--disable-blink-features=AutomationControlled",  # 去除自动化痕迹，防止被人机验证
         ]
@@ -340,7 +388,11 @@ class CloudGameController(GameControllerBase):
 
         if self.cfg.cloud_game_fullscreen_enable and not headless:
             args.append("--start-fullscreen")  # 全屏启动
-        args.extend(self.cfg.browser_launch_argument)  # 用户自定义参数
+        # Geometry flags are owned by the controller, not host/profile overrides.
+        blocked = ("--force-device-scale-factor", "--window-size", "--device-scale-factor")
+        args.extend(arg for arg in self.cfg.browser_launch_argument
+                    if not any(arg.split("=", 1)[0] == flag for flag in blocked))
+        args.append("--window-size=1920,1080")
         return args
 
     def _connect_or_create_browser(self, headless=False) -> None:
@@ -401,6 +453,9 @@ class CloudGameController(GameControllerBase):
                 options.debugger_address = f"127.0.0.1:{reconnect_port}"
                 self.driver = webdriver_type(service=service, options=options)
                 self._configure_pointer_lock(headless)
+                self._confirm_viewport_resolution()
+                if self._apply_cloud_game_settings():
+                    self._refresh_page()
                 self.log_info("已连接到现有浏览器")
                 return
             except Exception:
@@ -442,6 +497,7 @@ class CloudGameController(GameControllerBase):
         try:
             self.log_debug("启动浏览器中...")
             self.driver = webdriver_type(service=service, options=options)
+            self._quality_script_id = None
             self.log_debug("浏览器启动成功")
         except SessionNotCreatedException as e:
             self.log_error(f"浏览器启动失败: {e}")
@@ -464,6 +520,7 @@ class CloudGameController(GameControllerBase):
             raise RuntimeError("浏览器启动失败")
 
         self._configure_pointer_lock(headless)
+        self._confirm_viewport_resolution()
         if not self.cfg.cloud_game_fullscreen_enable:
             self.driver.set_window_size(1920, 1120)
         if first_run or not self.cfg.browser_persistent_enable:
@@ -472,6 +529,7 @@ class CloudGameController(GameControllerBase):
             self.change_auto_battle(True)
         if self.cfg.browser_dump_cookies_enable:
             self._load_cookies()
+        self._apply_cloud_game_settings()
         self._refresh_page()
 
     def _restart_browser(self, headless=False) -> None:
@@ -1635,6 +1693,7 @@ class CloudGameController(GameControllerBase):
         previous_timeout = client_config.timeout
         client_config.timeout = min(previous_timeout, 15) if previous_timeout is not None else 15
         try:
+            self._confirm_viewport_resolution()
             self._ensure_window_not_minimized_for_frame_capture()
             try:
                 result = self.driver.execute_cdp_cmd(

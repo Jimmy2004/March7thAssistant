@@ -228,6 +228,10 @@ def write_config_yaml(debug: bool = False, answers: dict[str, Any] | None = None
             base["cloud_game_max_queue_time"] = int(answers["max_queue_minutes"])
         if "login_timeout_minutes" in answers:
             base["cloud_game_login_timeout"] = int(answers["login_timeout_minutes"])
+        # 云游戏画质：仅当调用方显式提供 video_quality 时才覆盖；
+        # 不提供则保留现有 config.yaml 里的画质值。
+        if "video_quality" in answers:
+            base["cloud_game_video_quality"] = str(answers["video_quality"])
 
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(dir=CONFIG_PATH.parent, suffix=".tmp")
@@ -479,7 +483,7 @@ MENU_HEADER = "====== 云游戏终端（Mac Apple Silicon · 国服官服） ===
 MENU_ITEMS: tuple[tuple[str, str], ...] = (
     ("1", "执行一次任务"),
     ("2", "每天指定时间执行（计划任务）"),
-    ("3", "设置（重新运行首次配置问答）"),
+    ("3", "运行设置"),
     ("4", "调试运行（仅本次显示浏览器窗口）"),
     ("5", "显示当前配置和计划"),
     ("6", "退出"),
@@ -557,8 +561,53 @@ def action_schedule(debug: bool, retries: int) -> int:
             return _run_schedule(task, times, retries, debug)
 
 
-def action_settings() -> int:
-    """菜单 3：重新运行首次配置问答。"""
+# 云游戏画质选项：菜单编号 → 写入 config.yaml 的字符串值。
+_CLOUD_GAME_VIDEO_QUALITY_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("1", "0"),  # 超高清
+    ("2", "1"),  # 高清
+    ("3", "2"),  # 标清
+    ("4", "3"),  # 低清
+)
+
+
+def _action_cloud_game_video_quality() -> int:
+    """「设置 → 云游戏画质」子菜单。
+
+    显示 ``config.yaml`` 中当前的 ``cloud_game_video_quality``，让用户从
+    四档中选择；选择后调用 ``write_config_yaml(answers={"video_quality": id})``
+    写回。``0``/``b`` 仅返回，不写入。
+    """
+    # 读取当前画质作为默认值。
+    current = "0"
+    data = _load_yaml(CONFIG_PATH)
+    if isinstance(data, dict):
+        raw = data.get("cloud_game_video_quality")
+        if raw is not None:
+            current = str(raw)
+
+    print("── 云游戏画质 ──")
+    for number, value in _CLOUD_GAME_VIDEO_QUALITY_OPTIONS:
+        marker = "（当前）" if value == current else ""
+        labels = {"0": "超高清", "1": "高清", "2": "标清", "3": "低清"}
+        print(f"  {number}. {labels[value]} {marker}".rstrip())
+    print("  0/b. 返回")
+
+    raw = _prompt("请选择画质（0 或 b 返回）", default="0")
+    if raw.lower() in {"0", "b", "back"}:
+        return EXIT_OK
+    for number, value in _CLOUD_GAME_VIDEO_QUALITY_OPTIONS:
+        if raw == number:
+            settings = _load_terminal_settings()
+            debug = bool(settings.get("debug", False))
+            write_config_yaml(debug=debug, answers={"video_quality": value})
+            print(f"  已将云游戏画质设置为：{labels[value]}（下次启动自动应用）")
+            return EXIT_OK
+    print(f"  ! 无效输入：{raw!r}")
+    return EXIT_OK
+
+
+def action_general_settings() -> int:
+    """常规设置：重新运行首次配置问答。"""
     try:
         new_state = first_time_setup()
     except _CancelledSignal:
@@ -574,6 +623,24 @@ def action_settings() -> int:
     _save_terminal_settings(settings)
     print("  配置已写入 config.yaml 与 settings/terminal.json")
     return EXIT_OK
+
+
+def action_settings() -> int:
+    """菜单 3：设置子菜单（循环），内含常规设置与云游戏画质两项。"""
+    while True:
+        print("── 运行设置 ──")
+        print("  1. 重新配置常规设置")
+        print("  2. 云游戏画质")
+        print("  0. 返回")
+        raw = _prompt("请选择（0 返回主菜单）", default="0")
+        if raw.lower() in {"0", "b", "back"}:
+            return EXIT_OK
+        if raw == "1":
+            action_general_settings()
+        elif raw == "2":
+            _action_cloud_game_video_quality()
+        else:
+            print(f"  ! 无效输入：{raw!r}")
 
 
 def action_debug_run(retries: int) -> int:
@@ -613,9 +680,14 @@ def action_show_state() -> int:
     data = _load_yaml(CONFIG_PATH)
     if data is None:
         print("  （config.yaml 尚未生成）")
+        print("  screen: 1920×1080")
+        print("  cloud_game_video_quality: （未设置）")
     else:
         for key in CLOUD_GAME_DEFAULTS:
             print(f"  {key}: {data.get(key)}")
+        print("  screen: 1920×1080")
+        quality = data.get("cloud_game_video_quality")
+        print(f"  cloud_game_video_quality: {quality}")
     return EXIT_OK
 
 

@@ -72,6 +72,7 @@ class TestCloudGameScreenshotTimeout(unittest.TestCase):
         self.config = SimpleNamespace(timeout=120)
         self.controller.driver.command_executor._client_config = self.config
         self.controller._ensure_window_not_minimized_for_frame_capture = MagicMock()
+        self.controller._confirm_viewport_resolution = MagicMock()
         self.controller.logger = FakeLogger()
 
     def test_capture_limits_http_timeout_and_restores_it(self):
