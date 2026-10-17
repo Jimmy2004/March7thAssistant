@@ -1,12 +1,15 @@
 """``terminal.py`` 终端画质菜单的单元测试。
 
 覆盖：
-    * 四档画质映射：菜单 1/2/3/4 分别对应 ``cloud_game_video_quality``
-      字符串 ``'0'/'1'/'2'/'3'``。
+    * 三档画质映射：菜单 1/2/3 分别对应 ``cloud_game_video_quality``
+      的规范键 ``'high'/'traffic_saving'/'extreme_saving'``。
+    * 旧四档值迁移：``'0'/'1'`` 归一为 ``high``，``'2'`` 归一为
+      ``traffic_saving``，``'3'`` 归一为 ``extreme_saving``，且
+      ``write_config_yaml`` 在显式提供 ``video_quality`` 时归一化。
     * 返回不保存：画质子菜单输入 ``0``/``b`` 不写 ``config.yaml``。
     * 常规设置返回：设置主菜单输入 ``0`` 返回时不触发
       ``first_time_setup``，也不写 ``config.yaml``。
-    * ``action_show_state`` 中 ``cloud_game_video_quality`` 显示当前值。
+    * ``action_show_state`` 中 ``cloud_game_video_quality`` 显示当前中文标签。
 
 通过临时目录隔离 I/O，复用 ``tests/test_terminal_menu.py`` 中的 fixtures
 不需要 -- 直接重复最小 fixture，避免改动已有测试。
@@ -142,17 +145,16 @@ def _load_config_value(path: Path, key: str):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1. 四档画质映射
+# 1. 三档画质映射
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize(
     "menu_choice,expected",
     [
-        ("1", "0"),  # 超高清
-        ("2", "1"),  # 高清
-        ("3", "2"),  # 标清
-        ("4", "3"),  # 低清
+        ("1", "high"),           # 高画质
+        ("2", "traffic_saving"), # 省流画质
+        ("3", "extreme_saving"), # 极致省流
     ],
 )
 def test_cloud_game_video_quality_mapping(
@@ -165,7 +167,7 @@ def test_cloud_game_video_quality_mapping(
     menu_choice,
     expected,
 ):
-    """设置 → 云游戏画质 → 选 1/2/3/4 后，写入对应的 ``cloud_game_video_quality``。"""
+    """设置 → 云游戏画质 → 选 1/2/3 后，写入 ``utils.cloud_quality`` 的规范键。"""
     _seed_initialized(tmp_path)
     responses = [
         "3",       # 主菜单：进入「设置」
@@ -302,15 +304,35 @@ def test_write_config_yaml_without_video_quality_preserves_field(
 ):
     """``write_config_yaml`` 不提供 ``video_quality`` 时不应触碰
     ``cloud_game_video_quality``；再次调用不带视频参数时该值保持不变。"""
-    # 第一次写入：设置画质为 '2'（标清）。
+    # 第一次写入：设置画质为旧码 '2'，应被 ``normalize_quality`` 归一为
+    # ``traffic_saving``。
     terminal.write_config_yaml(answers={"video_quality": "2"})
     first = _load_config_value(isolated_paths["config"], "cloud_game_video_quality")
-    assert first == "2"
+    assert first == "traffic_saving"
 
     # 第二次写入：完全不传 answers，不应改画质。
     terminal.write_config_yaml()
     second = _load_config_value(isolated_paths["config"], "cloud_game_video_quality")
-    assert second == "2"
+    assert second == "traffic_saving"
+
+
+@pytest.mark.parametrize(
+    "legacy,expected",
+    [
+        ("0", "high"),
+        ("1", "high"),
+        ("2", "traffic_saving"),
+        ("3", "extreme_saving"),
+    ],
+)
+def test_write_config_yaml_normalizes_legacy_quality(
+    isolated_paths, legacy, expected
+):
+    """旧四档 ``'0'/'1'/'2'/'3'`` 在 ``write_config_yaml`` 中仍被识别，
+    并归一为三档规范键。"""
+    terminal.write_config_yaml(answers={"video_quality": legacy})
+    quality = _load_config_value(isolated_paths["config"], "cloud_game_video_quality")
+    assert quality == expected
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -327,9 +349,9 @@ def test_show_state_displays_screen_and_video_quality(
     fake_runner,
 ):
     """菜单 5：在 ``show state`` 输出中应包含 ``screen: 1920×1080``
-    与 ``cloud_game_video_quality``。"""
+    与 ``cloud_game_video_quality``（中文标签）。"""
     _seed_initialized(tmp_path)
-    # 预先写一份带画质值的 config.yaml。
+    # 预先写一份带画质值的 config.yaml（旧码 '1' → high）。
     terminal.write_config_yaml(answers={"video_quality": "1"})
 
     responses = ["5", "6"]
@@ -338,3 +360,4 @@ def test_show_state_displays_screen_and_video_quality(
     out = capsys.readouterr().out
     assert "1920×1080" in out
     assert "cloud_game_video_quality" in out
+    assert "高画质" in out

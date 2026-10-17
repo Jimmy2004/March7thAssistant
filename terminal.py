@@ -232,7 +232,9 @@ def write_config_yaml(debug: bool = False, answers: dict[str, Any] | None = None
         # 云游戏画质：仅当调用方显式提供 video_quality 时才覆盖；
         # 不提供则保留现有 config.yaml 里的画质值。
         if "video_quality" in answers:
-            base["cloud_game_video_quality"] = str(answers["video_quality"])
+            from utils.cloud_quality import normalize_quality
+
+            base["cloud_game_video_quality"] = normalize_quality(answers["video_quality"])
 
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(dir=CONFIG_PATH.parent, suffix=".tmp")
@@ -682,12 +684,12 @@ def action_schedule(debug: bool, retries: int) -> int:
             return _run_schedule(task, times, retries, debug)
 
 
-# 云游戏画质选项：菜单编号 → 写入 config.yaml 的字符串值。
+# 云游戏画质选项：菜单编号 → utils.cloud_quality 中的规范 key。
+# 三档：1=高画质、2=省流画质、3=极致省流。
 _CLOUD_GAME_VIDEO_QUALITY_OPTIONS: tuple[tuple[str, str], ...] = (
-    ("1", "0"),  # 超高清
-    ("2", "1"),  # 高清
-    ("3", "2"),  # 标清
-    ("4", "3"),  # 低清
+    ("1", "high"),
+    ("2", "traffic_saving"),
+    ("3", "extreme_saving"),
 )
 
 
@@ -695,33 +697,40 @@ def _action_cloud_game_video_quality() -> int:
     """「设置 → 云游戏画质」子菜单。
 
     显示 ``config.yaml`` 中当前的 ``cloud_game_video_quality``，让用户从
-    四档中选择；选择后调用 ``write_config_yaml(answers={"video_quality": id})``
+    三档中选择；选择后调用 ``write_config_yaml(answers={"video_quality": key})``
     写回。``0``/``b`` 仅返回，不写入。
     """
-    # 读取当前画质作为默认值。
-    current = "0"
+    # 读取当前画质作为默认值（显示当前档时使用相同的规范 key）。
+    current: str | None = None
     data = _load_yaml(CONFIG_PATH)
     if isinstance(data, dict):
         raw = data.get("cloud_game_video_quality")
         if raw is not None:
-            current = str(raw)
+            try:
+                from utils.cloud_quality import normalize_quality as _normalize_quality
+
+                current = _normalize_quality(raw)
+            except Exception:
+                current = None
+
+    # 延迟导入，保证 --help / --list 不付成本。
+    from utils.cloud_quality import quality_label
 
     print("── 云游戏画质 ──")
-    for number, value in _CLOUD_GAME_VIDEO_QUALITY_OPTIONS:
-        marker = "（当前）" if value == current else ""
-        labels = {"0": "超高清", "1": "高清", "2": "标清", "3": "低清"}
-        print(f"  {number}. {labels[value]} {marker}".rstrip())
+    for number, key in _CLOUD_GAME_VIDEO_QUALITY_OPTIONS:
+        marker = "（当前）" if key == current else ""
+        print(f"  {number}. {quality_label(key)} {marker}".rstrip())
     print("  0/b. 返回")
 
     raw = _prompt("请选择画质（0 或 b 返回）", default="0")
     if raw.lower() in {"0", "b", "back"}:
         return EXIT_OK
-    for number, value in _CLOUD_GAME_VIDEO_QUALITY_OPTIONS:
+    for number, key in _CLOUD_GAME_VIDEO_QUALITY_OPTIONS:
         if raw == number:
             settings = _load_terminal_settings()
             debug = bool(settings.get("debug", False))
-            write_config_yaml(debug=debug, answers={"video_quality": value})
-            print(f"  已将云游戏画质设置为：{labels[value]}（下次启动自动应用）")
+            write_config_yaml(debug=debug, answers={"video_quality": key})
+            print(f"  已将云游戏画质设置为：{quality_label(key)}（下次启动自动应用）")
             return EXIT_OK
     print(f"  ! 无效输入：{raw!r}")
     return EXIT_OK
@@ -808,7 +817,16 @@ def action_show_state() -> int:
             print(f"  {key}: {data.get(key)}")
         print("  screen: 1920×1080")
         quality = data.get("cloud_game_video_quality")
-        print(f"  cloud_game_video_quality: {quality}")
+        if quality is None:
+            quality_label_text = "（未设置）"
+        else:
+            try:
+                from utils.cloud_quality import quality_label
+
+                quality_label_text = quality_label(quality)
+            except Exception:
+                quality_label_text = str(quality)
+        print(f"  cloud_game_video_quality: {quality_label_text}")
     return EXIT_OK
 
 

@@ -175,8 +175,7 @@ class CloudGameController(GameControllerBase):
 
     VIEWPORT_WIDTH = 1920
     VIEWPORT_HEIGHT = 1080
-    VIDEO_QUALITY_LABELS = {"0": "超高清", "1": "高清", "2": "标清", "3": "低清"}
-    CLIENT_CONFIG_KEY = "clgm_web_app_client_store_config_hkrpg_cn"
+    GRAPHICS_CONFIG_KEY = "clgm_web_app_settings_hkrpg_cn"
 
     def _confirm_viewport_resolution(self) -> None:
         """Lock CSS viewport, DPR and page scale independently of the desktop."""
@@ -191,14 +190,14 @@ class CloudGameController(GameControllerBase):
         self.driver.execute_cdp_cmd("Emulation.setPageScaleFactor", {"pageScaleFactor": 1})
 
     def _apply_cloud_game_settings(self) -> bool:
-        """Persist bitrate selection before the web app loads its player config.
+        """Persist graphics mode before the web app initializes its player.
 
         Existing profile preferences are merged, never replaced by presets.
         Returning True means an existing document needs one refresh to load it.
         """
-        quality = str(self.cfg.get_value("cloud_game_video_quality", "0"))
-        if quality not in self.VIDEO_QUALITY_LABELS:
-            raise ValueError("云游戏画质配置无效，应为 0（超高清）、1（高清）、2（标清）或 3（低清）")
+        from utils.cloud_quality import graphics_mode, quality_label
+        quality = self.cfg.get_value("cloud_game_video_quality", "high")
+        mode = graphics_mode(quality)
         source = """
             (() => {
                 if (location.origin !== 'https://sr.mihoyo.com') return false;
@@ -209,13 +208,13 @@ class CloudGameController(GameControllerBase):
                 if (!config || typeof config !== 'object' || Array.isArray(config)) {
                     throw new Error('云游戏客户端配置不是对象');
                 }
-                const quality = %s;
-                const changed = config.speedLimitGearId !== quality;
-                config.speedLimitGearId = quality;
+                const graphicsMode = %s;
+                const changed = config.graphicsMode !== graphicsMode;
+                config.graphicsMode = graphicsMode;
                 localStorage.setItem(key, JSON.stringify(config));
                 return changed;
             })()
-        """ % (json.dumps(self.CLIENT_CONFIG_KEY), json.dumps(quality))
+        """ % (json.dumps(self.GRAPHICS_CONFIG_KEY), json.dumps(mode))
         # Run before application JS on every subsequent reload/navigation.
         previous = getattr(self, "_quality_script_id", None)
         if previous:
@@ -224,12 +223,12 @@ class CloudGameController(GameControllerBase):
         self._quality_script_id = registered.get("identifier")
         changed = self.driver.execute_script("return " + source.strip())
         stored = self.driver.execute_script(
-            "return JSON.parse(localStorage.getItem(arguments[0]) || '{}').speedLimitGearId;",
-            self.CLIENT_CONFIG_KEY,
+            "return JSON.parse(localStorage.getItem(arguments[0]) || '{}').graphicsMode;",
+            self.GRAPHICS_CONFIG_KEY,
         )
-        if stored != quality:
+        if type(stored) is not int or stored != mode:
             raise RuntimeError("云游戏画质设置未保存，停止启动以避免使用错误档位")
-        self.log_info(f"云游戏画质已设为{self.VIDEO_QUALITY_LABELS[quality]}，游戏画面固定 1920×1080")
+        self.log_info(f"云游戏画质已设为{quality_label(quality)}，游戏画面固定 1920×1080")
         return bool(changed)
 
     def _configure_pointer_lock(self, headless: bool) -> None:
@@ -543,19 +542,6 @@ class CloudGameController(GameControllerBase):
         try:
             with open("assets/config/initial_local_storage.json", "r", encoding="utf-8") as f:
                 data = json.load(f)
-
-            # settings = json.loads(data["clgm_web_app_settings_hkrpg_cn"])
-            # settings["videoMode"] = self.cfg.cloud_game_smooth_first_enable if 1 else 0
-            # data["clgm_web_app_settings_hkrpg_cn"] = json.dumps(settings)
-
-            # client_config = json.loads(data["clgm_web_app_client_store_config_hkrpg_cn"])
-            # client_config["speedLimitGearId"] = self.cfg.cloud_game_video_quality
-            # client_config["fabPosition"]["x"] = self.cfg.cloud_game_fab_pos_x
-            # client_config["fabPosition"]["y"] = self.cfg.cloud_game_fab_pos_y
-            # client_config["showGameStatBar"] = self.cfg.cloud_game_status_bar_enable
-            # client_config["gameStatBarType"] = self.cfg.cloud_game_status_bar_type
-            # client_config["volume"] = self.cfg.browser_headless_enable if 0 else 1
-            # data["clgm_web_app_client_store_config_hkrpg_cn"] = json.dumps(client_config)
 
             # 注入浏览器
             for key, value in data.items():

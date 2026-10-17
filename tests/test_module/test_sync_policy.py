@@ -200,3 +200,7 @@ def test_preserves_mac_specific_modules(path):
 
 def test_real_model_directory_is_managed():
     assert managed("assets/model/divergent.onnx")
+
+
+def test_cloud_quality_compatibility_helper_is_protected():
+    assert not managed("utils/cloud_quality.py")

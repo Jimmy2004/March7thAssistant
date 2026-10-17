@@ -11,7 +11,7 @@ from PIL import Image
 from module.game.cloud import CloudGameController
 
 
-def controller(quality='2'):
+def controller(quality='traffic_saving'):
     instance = CloudGameController.__new__(CloudGameController)
     instance.driver = Mock()
     instance.cfg = SimpleNamespace(get_value=lambda key, default=None: quality)
@@ -29,15 +29,17 @@ def test_geometry_ignores_host_scale_and_dimensions():
     assert commands[1].args == ('Emulation.setPageScaleFactor', {'pageScaleFactor': 1})
 
 
-@pytest.mark.parametrize('quality', ['0', '1', '2', '3'])
-def test_quality_registered_for_next_page_and_read_back(quality):
+@pytest.mark.parametrize('quality,mode', [('high',0),('traffic_saving',1),('extreme_saving',2)])
+def test_quality_registered_for_next_page_and_read_back(quality,mode):
     c = controller(quality)
     c.driver.execute_cdp_cmd.return_value = {'identifier': 'quality-script'}
-    c.driver.execute_script.side_effect = [True, quality]
+    c.driver.execute_script.side_effect = [True, mode]
     assert c._apply_cloud_game_settings() is True
     command, args = c.driver.execute_cdp_cmd.call_args.args
     assert command == 'Page.addScriptToEvaluateOnNewDocument'
-    assert 'config.speedLimitGearId = quality' in args['source']
+    assert 'config.graphicsMode = graphicsMode' in args['source']
+    assert 'speedLimitGearId' not in args['source']
+    assert 'clgm_web_app_settings_hkrpg_cn' in args['source']
     assert 'https://sr.mihoyo.com' in args['source']
     assert c._quality_script_id == 'quality-script'
 
@@ -50,7 +52,7 @@ def test_invalid_quality_does_not_change_browser():
 
 
 def test_unapplied_quality_is_not_reported_as_success():
-    c = controller('2')
+    c = controller('traffic_saving')
     c.driver.execute_cdp_cmd.return_value = {'identifier': 'quality-script'}
     c.driver.execute_script.side_effect = [True, '0']
     with pytest.raises(RuntimeError, match='未保存'):
@@ -58,10 +60,10 @@ def test_unapplied_quality_is_not_reported_as_success():
 
 
 def test_refresh_script_is_replaced_instead_of_accumulated():
-    c = controller('1')
+    c = controller('high')
     c._quality_script_id = 'previous-script'
     c.driver.execute_cdp_cmd.return_value = {'identifier': 'new-script'}
-    c.driver.execute_script.side_effect = [False, '1']
+    c.driver.execute_script.side_effect = [False, 0]
     assert c._apply_cloud_game_settings() is False
     assert c.driver.execute_cdp_cmd.call_args_list[0].args == (
         'Page.removeScriptToEvaluateOnNewDocument', {'identifier': 'previous-script'})

@@ -91,6 +91,7 @@ _UTILS_DENY_FILES: Final[frozenset[str]] = frozenset({
     "utils/schedule.py",
     "utils/desktop.py",
     "utils/terminal_qr.py",
+    "utils/cloud_quality.py",
 })
 
 # ``assets/config/`` exclusion.
