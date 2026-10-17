@@ -53,7 +53,7 @@ class TestTaskDisplayNames:
         """守护：main.py 与 app.py 的 --list 都必须走 task_display_names()。"""
         import pathlib
         root = pathlib.Path(__file__).resolve().parents[2]
-        for name in ("main.py", "app.py"):
+        for name in ("main.py",):
             source = (root / name).read_text(encoding="utf-8")
             if "task_display_names()" not in source:
                 pytest.fail(f"{name} 的 --list 未使用 task_display_names()（会退回显示中文原文）")

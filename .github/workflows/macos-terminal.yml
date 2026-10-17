@@ -1,0 +1,19 @@
+name: Mac terminal tests
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, macos-terminal]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements-macos.txt pytest polib
+      - run: python -m pytest tests/test_terminal_menu.py tests/test_module/test_terminal_runner.py tests/test_module/test_cloud_game.py tests/test_utils/test_terminal_qr.py tests/test_tasks/test_terminal_task_results.py tests/test_tasks/test_terminal_autoplot.py

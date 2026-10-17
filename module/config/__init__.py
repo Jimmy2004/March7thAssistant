@@ -21,7 +21,7 @@ if sys.platform != 'win32':
 cfg = Config(VERSION_PATH, EXAMPLE_PATH, CONFIG_PATH)
 
 cfg.env = os.environ.copy()
-cfg.env['PATH'] = os.path.dirname(cfg.python_exe_path) + ';' + cfg.env['PATH']
+cfg.env['PATH'] = os.path.dirname(cfg.python_exe_path) + os.pathsep + cfg.env['PATH']
 cfg.useragent = {"User-Agent": f"March7thAssistant/{cfg.version}"}
 
 if sys.platform == 'win32':

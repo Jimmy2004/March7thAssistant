@@ -4,7 +4,7 @@ import time
 import psutil
 
 
-from app.tools.account_manager import load_acc_and_pwd
+from module.game.account import load_acc_and_pwd
 from utils.registry.gameaccount import gamereg_uid
 from .starrailcontroller import StarRailController
 
@@ -69,7 +69,7 @@ def ensure_game_ready():
 
 
 def start_game():
-    MAX_RETRY = 3
+    MAX_RETRY = 1 if os.environ.get("MARCH7TH_TERMINAL") == "1" else 3
 
     def check_and_click_enter():
         # 点击进入
@@ -227,6 +227,8 @@ def start_game():
                     cloud_game.stop_game()
                 else:
                     starrail.stop_game()
+                if retry == MAX_RETRY - 1:
+                    raise TimeoutError("获取当前界面超时，启动失败")
                 continue
             break
         except CloudGameLoginTimeoutError:

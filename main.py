@@ -133,6 +133,22 @@ if sys.platform == 'win32':
             sys.exit(1)
 
 from module.config import cfg
+
+# Terminal mode has its own initialization and owns process cleanup.
+TERMINAL_MODE = os.environ.get("MARCH7TH_TERMINAL") == "1"
+if TERMINAL_MODE:
+    cfg.config.update({
+        "cloud_game_enable": True,
+        "browser_headless_restart_on_not_logged_in": False,
+        "after_finish": "Exit",
+        "pause_after_success": False,
+        "exit_after_failure": True,
+        "check_update": False,
+        "auto_update": False,
+        "universe_enable": False,
+        "fight_enable": False,
+        "telemetry_enable": False,
+    })
 from module.logger import log
 from module.notification import notif
 from module.telemetry import telemetry
@@ -176,7 +192,7 @@ telemetry.init(
 
 
 def first_run():
-    if not is_docker_started() and not cfg.get_value(base64.b64decode("YXV0b191cGRhdGU=").decode("utf-8")):
+    if not TERMINAL_MODE and not is_docker_started() and not cfg.get_value(base64.b64decode("YXV0b191cGRhdGU=").decode("utf-8")):
         log.error("首次使用请先打开图形界面 March7th Launcher")
         pause_always()
         sys.exit(0)
@@ -232,7 +248,7 @@ def run_sub_task(action):
         elif mode == "temp":
             war.loop()
         else:
-            war.start()
+            return war.start()
 
     def divergent(mode=None):
         universe = DivergentUniverse()
@@ -241,11 +257,33 @@ def run_sub_task(action):
         elif mode == "temp":
             universe.loop()
         else:
-            universe.start()
+            return universe.start()
+
+    def daily_with_rewards():
+        result = Daily.run()
+        if result is False:
+            return False
+        return reward.start()
+
+    def autoplot():
+        from tasks.tool.autoplot.terminal import run
+        return run()
+
+    def screenshot():
+        from module.automation import auto
+        from pathlib import Path
+        image, _, _ = auto.take_screenshot()
+        path = Path("logs") / f"game-{time.strftime('%Y%m%d-%H%M%S')}.png"
+        path.parent.mkdir(exist_ok=True)
+        image.save(path)
+        log.info(f"截图已保存：{path.resolve()}")
+        return True
 
     sub_tasks = {
+        "autoplot": autoplot,
+        "screenshot": screenshot,
         "routine": Daily.routine,
-        "daily": lambda: (Daily.run(), reward.start()),
+        "daily": daily_with_rewards,
         "power": Power.run,
         "currencywars": lambda: currencywars(),
         "currencywarsloop": lambda: currencywars("loop"),
@@ -269,7 +307,9 @@ def run_sub_task(action):
             telemetry.track_task_start(action)
             task_start_time = time.time()
             try:
-                task()
+                result = task()
+                if result is False:
+                    raise RuntimeError(f"任务未完成: {action}")
                 telemetry.track_task_complete(action, True, time.time() - task_start_time)
             except Exception:
                 telemetry.track_task_complete(action, False, time.time() - task_start_time)
@@ -346,7 +386,7 @@ def main(action=None, no_run_immediately=False, workflow_name=None, workflow_ste
         run_main_actions(no_run_immediately)
 
     # 子任务
-    elif action in ["routine", "daily", "power", "currencywars", "currencywarsloop", "currencywarstemp", "divergent", "divergentloop", "divergenttemp", "fight", "universe", "forgottenhall", "purefiction", "apocalyptic", "redemption", "screen_test"]:
+    elif action in ["autoplot", "screenshot", "routine", "daily", "power", "currencywars", "currencywarsloop", "currencywarstemp", "divergent", "divergentloop", "divergenttemp", "fight", "universe", "forgottenhall", "purefiction", "apocalyptic", "redemption", "screen_test"]:
         run_sub_task(action)
 
     # 子任务 原生图形界面
@@ -381,6 +421,11 @@ def main(action=None, no_run_immediately=False, workflow_name=None, workflow_ste
 # 程序结束时的处理器
 def exit_handler():
     """注册程序退出时的处理函数，用于清理OCR和调试资源."""
+    if TERMINAL_MODE:
+        try:
+            cloud_game.stop_game()
+        except Exception as exc:
+            log.warning(f"关闭云游戏失败，将由终端父进程清理: {exc}")
     telemetry.shutdown()
     ocr.exit_ocr()
     # 清理调试叠加层

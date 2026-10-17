@@ -1,151 +1,64 @@
-<div align="center">
-  <h1 align="center">
-    <img src="./assets/screenshot/March7th.png" width="200">
-    <br/>
-    March7thAssistant
-  </h1>
-  <a href="https://trendshift.io/repositories/3892" target="_blank"><img src="https://trendshift.io/api/badge/repositories/3892" alt="moesnow%2FMarch7thAssistant | Trendshift" style="width: 200px; height: 46px;" width="250" height="46"/></a>
-</div>
+# 三月七小助手：Apple Silicon 终端版
 
-<br/>
+目标平台为 Apple Silicon Mac、国服官服云·星穹铁道。正常运行不显示浏览器和助手窗口，终端显示菜单、日志和登录二维码。浏览器仅在主动选择调试运行时显示。
 
-<div align="center">
-🌟 点一下右上角的 Star，GitHub 主页就能收到软件更新通知了哦~
-</div>
+本分支正在移植中，尚不等同于 Windows 全功能版。当前入口覆盖原项目内置云游戏任务；外部模拟宇宙、锄大地及抽卡记录仍需继续移植；自动剧情已增加纯终端引擎，尚待实机验收。
 
-<div align="center">
-    <img src="assets/screenshot/star.gif" alt="Star" width="186" height="60">
-</div>
+## 安装
 
-<br/>
+需要 Git、原生 ARM64 Python 3.12，以及可连接国服云游戏的网络。使用原生终端，避免以 Rosetta 运行 Python。
 
-<div align="center">
-
-**简体中文** | [繁體中文](./README_TW.md) | [English](./README_EN.md) | [日本語](./README_JA.md) | [한국어](./README_KR.md)
-
-快速上手，请访问：[使用教程](https://m7a.top/#/assets/docs/Tutorial)
-
-遇到问题，请在提问前查看：[FAQ](https://m7a.top/#/assets/docs/FAQ)
-
-</div>
-
-## 功能简介
-
-- **日常**：清体力、每日实训、领取奖励、委托、锄大地
-- **周常**：历战余响、模拟宇宙、差分宇宙、货币战争、混沌回忆、虚构叙事、末日幻影
-- **云·星穹铁道**：支持后台运行、无窗口运行和 [Docker](https://m7a.top/#/assets/docs/Docker) 运行
-- **抽卡记录导出**：支持 [UIGF](https://uigf.org/zh/standards/uigf.html)/[SRGF](https://uigf.org/zh/standards/srgf.html) 标准
-- **工具箱**：自动对话、解锁帧率、兑换码、触屏模式
-- 每日实训等任务的完成情况支持**消息推送**
-- 任务刷新或体力恢复到指定值后**自动启动**
-- 任务完成后**声音提示、自动关闭游戏或关机等**
-
-详情见图形界面设置或 [配置文件](assets/config/config.example.yaml)｜QQ群 [点击跳转](https://qm.qq.com/q/C3IryUWCQw)｜TG群 [点击跳转](https://t.me/+ZgH5zpvFS8o0NGI1)｜哔哩哔哩 [点击跳转](https://space.bilibili.com/3706960664857075)
-
-## 界面展示
-
-![README](assets/screenshot/README.png)
-
-## 注意事项
-
-- 遇到错误请在 [Issue](https://github.com/moesnow/March7thAssistant/issues) 反馈，提问讨论可以在 [Discussions](https://github.com/moesnow/March7thAssistant/discussions) ，群聊随缘看
-- 欢迎 [PR](https://github.com/moesnow/March7thAssistant/pulls)，提交前请先阅读 [贡献指南](CONTRIBUTING.md)
-
-## 下载安装
-
-前往 [Releases](https://github.com/moesnow/March7thAssistant/releases/latest) 下载后解压双击三月七图标的 `March7th Launcher.exe` 打开图形界面
-
-## 源码运行
-
-如果你是完全不懂的小白，请通过上面的方式下载安装，可以不用往下看了。
-
-需要 Python 3.12 或更高版本。
-
-Windows 下如果通过终端启动，建议使用管理员模式打开 PowerShell、Windows Terminal 或 CMD；Windows 11 24H2 及以上也可以按 [Sudo for Windows](https://learn.microsoft.com/zh-cn/windows/advanced-settings/sudo/) 的方式执行。
-
-```cmd
-# 安装（推荐使用虚拟环境）
-git clone --recurse-submodules https://github.com/moesnow/March7thAssistant
+```sh
+git clone --branch macos-terminal https://github.com/Jimmy2004/March7thAssistant.git
 cd March7thAssistant
-pip install -r requirements.txt
-
-# 启动图形界面
-python app.py
-
-# 执行完整运行（查看全部子命令：python main.py -h）
-python main.py
-
-# 更新
-git pull
-git submodule update --init --recursive
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements-macos.txt
+python terminal.py
 ```
 
-如果使用 `uv`，推荐直接使用项目自带的 `pyproject.toml` 工作流：
+首次使用可能自动下载专用 Chrome for Testing 和对应驱动。无需安装 Qt 或打开原 Launcher。
 
-```cmd
-# 安装（使用 uv）
-git clone --recurse-submodules https://github.com/moesnow/March7thAssistant
-cd March7thAssistant
-uv sync
+## 使用
 
-# 启动图形界面
-uv run python app.py
+首次启动在终端逐项配置。输入 `b` 返回上一题；菜单中输入 `0` 返回。完成初始化后，用数字选择执行一次、每日指定时间运行、修改设置、调试运行或查看设置。运行时按 Ctrl+C 停止并关闭云游戏。
 
-# 查看命令行帮助
-uv run python main.py -h
+账号未登录时，程序抓取网页二维码并直接在终端绘制；使用米游社 App 扫码并确认。二维码过期会自动刷新。请加宽终端以完整显示二维码，保持合适亮度。登录资料由本项目独立浏览器资料目录保存。
 
-# 执行完整运行
-uv run python main.py
+```sh
+# 不启动游戏的帮助与任务列表
+python terminal.py --help
+python terminal.py --list
 
-# 执行每日实训
-uv run python main.py daily
+# 初始化后，直接运行每日实训
+python terminal.py --task daily
+
+# 仅此轮显示浏览器，便于调试
+python terminal.py --task daily --debug
+
+# 每天在 Mac 本地时区的指定时间运行
+python terminal.py --task daily --schedule 08:00,20:00
 ```
 
-<details>
-<summary>开发相关</summary>
+定时运行需要终端进程保持运行、Mac 保持唤醒。锁屏与休眠不同：真实休眠期间无法执行任务。错过的多个时间点不会密集补跑。每次任务结束或重试耗尽后关闭本项目云游戏浏览器；等待下次计划时不占用游戏会话。不会关闭普通 Chrome 窗口。
 
-获取 crop 参数表示的裁剪坐标，可以通过小助手工具箱内「游戏截图」卡片的「捕获」功能
+`config.yaml` 保存任务参数；`settings/terminal.json` 保存终端偏好和计划。任务菜单还提供自动剧情和保存云游戏截图。需要细调体力、队伍、奖励和推送时，可按 `assets/config/config.example.yaml` 的注释修改 `config.yaml`。默认禁止使用付费时长。
 
-</details>
+## 范围
 
----
+- 日常、体力、奖励、货币战争、内置差分宇宙和三种高难挑战复用现有云游戏自动化，仍需逐项实机测试。
+- 模拟宇宙外部引擎及锄大地使用 Windows 输入、桌面截图和本地窗口检测，尚未适配，不在当前可执行菜单中冒充可用。
+- 抽卡记录目前需要迁移本地缓存取链接方案。自动剧情使用单线程轮询及云游戏截图/输入，不依赖 Qt；按 Ctrl+C 停止。
+- Windows 本地游戏专属的帧率解锁、触屏进程修改、启动器更新/预下载不属于本版本。
+- 单账户，Intel Mac 暂不支持。正常模式禁止登录失效时切换为有窗口浏览器。
 
-如果喜欢本项目，可以微信赞赏送作者一杯咖啡☕
+## 开发检查
 
-您的支持就是作者开发和维护项目的动力🚀
+```sh
+python -m pip install pytest
+python -m pytest tests/test_terminal_menu.py tests/test_module/test_terminal_runner.py tests/test_utils/test_terminal_qr.py
+```
 
-![sponsor](assets/app/images/sponsor.jpg)
+测试使用模拟任务和进程，不会登录账号或消耗云游戏时长。实际云会话的登录、渲染、识别与任务结果需要单独验收。
 
----
-
-## 相关项目
-
-March7thAssistant 离不开以下开源项目和运行时依赖的帮助，感谢所有维护者与贡献者：
-
-- 模拟宇宙自动化 [https://github.com/CHNZYX/Auto_Simulated_Universe](https://github.com/CHNZYX/Auto_Simulated_Universe) ：提供模拟宇宙相关能力
-- 锄大地自动化 [https://github.com/linruowuyin/Fhoe-Rail](https://github.com/linruowuyin/Fhoe-Rail) ：提供锄大地相关能力
-- OCR 文字识别 [https://github.com/RapidAI/RapidOCR](https://github.com/RapidAI/RapidOCR) ：提供游戏内文字识别能力
-- 图形界面组件库 [https://github.com/zhiyiYo/PyQt-Fluent-Widgets](https://github.com/zhiyiYo/PyQt-Fluent-Widgets) ：提供主要界面组件与交互体验
-- Mirror酱 [https://github.com/MirrorChyan/docs](https://github.com/MirrorChyan/docs) ：提供更新检查与下载分发以及 CDN 加速相关能力
-- 图像处理与自动化相关依赖 `OpenCV`、`PyAutoGUI` 等：提供截图采集、图像处理与基础自动化能力
-- 推理加速相关依赖 `ONNX Runtime`、`OpenVINO` ：为 OCR 和模型推理提供 CPU / GPU 加速支持
-
-此外，`requirements.txt` 中还包含大量底层依赖，在这里不一一列出；同样感谢这些项目对本项目的支持。
-
-
-## Contributors
-<a href="https://github.com/moesnow/March7thAssistant/graphs/contributors">
-
-  <img src="https://contrib.rocks/image?repo=moesnow/March7thAssistant" />
-
-</a>
-
-## Stargazers over time
-
-<a href="https://star-history.dera.page/#moesnow/March7thAssistant">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=moesnow/March7thAssistant&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=moesnow/March7thAssistant" />
-   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=moesnow/March7thAssistant" />
- </picture>
-</a>
+基于 [moesnow/March7thAssistant](https://github.com/moesnow/March7thAssistant)，遵循仓库 GPL-3.0 许可证。

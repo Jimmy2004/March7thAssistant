@@ -31,7 +31,7 @@ from module.game.base import GameControllerBase
 from module.logger import Logger
 # from utils.encryption import wdp_encrypt, wdp_decrypt
 
-from utils.console import is_docker_started
+from utils.console import is_docker_started, is_gui_started
 
 
 class CloudGameLoginTimeoutError(RuntimeError):
@@ -1098,9 +1098,13 @@ class CloudGameController(GameControllerBase):
             data, points, _ = detector.detectAndDecode(img)
 
             if data:
-                self.log_info("二维码内容：")
-                self.log_info(data)
-                self.log_info("提示：你也可以将该内容自行生成二维码后再扫码登录。")
+                # 不再通过 log_info 写出原始登录链接，避免进入日志文件；
+                # 仅在终端模式下渲染二维码，便于用户直接扫码登录。
+                try:
+                    self._render_qr_to_terminal(data)
+                except Exception as render_err:
+                    self.log_debug(f"渲染终端二维码失败: {render_err}")
+                self.log_info("提示：你也可以将终端二维码截图后用其它设备扫码登录，或自行生码后再登录。")
 
                 # 发送二维码登录通知
                 try:
@@ -1112,6 +1116,72 @@ class CloudGameController(GameControllerBase):
 
         except Exception as e:
             self.log_warning(f"解析二维码内容失败: {e}")
+
+    @staticmethod
+    def _terminal_qr_explicitly_requested() -> bool:
+        """Whether the caller opted in to terminal QR rendering.
+
+        The GUI launcher sets ``MARCH7TH_GUI_STARTED=true`` to suppress
+        post-run pauses, but it still wants the QR rendered when the
+        underlying process is a terminal (``MARCH7TH_TERMINAL=1``).
+        This mirrors the tolerant reader style used elsewhere in the
+        codebase.
+        """
+        return os.environ.get("MARCH7TH_TERMINAL", "").lower() in (
+            "true", "1", "yes", "on"
+        )
+
+    def _render_qr_to_terminal(self, qr_data: str) -> bool:
+        """把解码出的登录内容渲染成终端二维码并直接写出。
+
+        - Docker 启动时不渲染（通常无交互终端）
+        - GUI 启动时不渲染，但 ``MARCH7TH_TERMINAL=1`` 可以覆盖：终端
+          运行器会设置 ``MARCH7TH_GUI_STARTED=true`` 抑制暂停，但仍需要
+          在终端里展示二维码
+        - stdout 是 TTY 时用半块+ANSI，否则回退成 ASCII
+        - 正常模式（普通终端）下不打开浏览器窗口作为备用方案
+        - 不会把登录链接写进日志
+        - 终端过窄时拒绝渲染并提示用户拉宽窗口（不输出坏掉的二维码）
+        """
+        from utils.terminal_qr import (
+            TerminalTooNarrowError,
+            render_qr_terminal,
+        )
+
+        if is_docker_started():
+            return False
+        if is_gui_started() and not self._terminal_qr_explicitly_requested():
+            return False
+        if not qr_data:
+            return False
+
+        try:
+            text, _ = render_qr_terminal(qr_data, stream=sys.stdout)
+        except TerminalTooNarrowError as narrow_err:
+            # 渲染失败只提示用户拉宽终端；绝不打印登录链接。
+            self.log_warning(
+                "终端窗口过窄，无法直接渲染二维码（" + str(narrow_err) + "）。"
+                "请拉宽终端窗口后重新触发登录，或在 logs/qrcode_login.png 查看图片。"
+            )
+            return False
+        except Exception as render_err:
+            self.log_debug(f"渲染终端二维码失败: {render_err}")
+            return False
+
+        # 正常模式（普通 CLI）下绝不打开浏览器窗口作为回退；
+        # 仅在终端直接输出二维码。
+        sep = "\n"
+        try:
+            sys.stdout.write(sep)
+            sys.stdout.write(text)
+            sys.stdout.write(sep)
+            sys.stdout.flush()
+        except Exception as write_err:
+            self.log_debug(f"写入终端二维码失败: {write_err}")
+            return False
+
+        self.log_info("终端二维码已写入，请用米游社 APP 扫描登录")
+        return True
 
     def _wait_scan_success_with_refresh(self, qr_filename: str, login_deadline: float = None, timeout_seconds: int = None) -> None:
         import os

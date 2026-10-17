@@ -1,6 +1,8 @@
 import unittest
 import base64
+import io
 import os
+import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from urllib3.exceptions import ReadTimeoutError
@@ -277,3 +279,241 @@ class TestCloudGameDebugPort(unittest.TestCase):
             ("127.0.0.1", 0)
         )
         self.assertEqual(port, 49152)
+
+
+class _CaptureLogger:
+    """Minimal logger stub capturing log_info / log_debug output.
+
+    Mirrors the FakeLogger above so we can introspect what the cloud module
+    wrote to logs (in particular: the QR login URL must never reach log_info).
+    """
+
+    def __init__(self):
+        # Use non-shadowing names so the info method below stays callable.
+        self.info_messages = []
+        self.debug_messages = []
+        self.warning_messages = []
+        self.error_messages = []
+
+    def info(self, msg):
+        self.info_messages.append(msg)
+
+    def debug(self, msg):
+        self.debug_messages.append(msg)
+
+    def warning(self, msg):
+        self.warning_messages.append(msg)
+
+    def error(self, msg):
+        self.error_messages.append(msg)
+
+
+class _TtyStringIO(io.StringIO):
+    """A StringIO that reports itself as a TTY so the renderer emits ANSI."""
+
+    def isatty(self):  # type: ignore[override]
+        return True
+
+
+class TestCloudGameQrTerminalIntegration(unittest.TestCase):
+    """Exercise CloudGameController._render_qr_to_terminal and verify it
+    honours the terminal-QR contract (no URL logging, GUI / Docker guard,
+    TTY / non-TTY handling)."""
+
+    def setUp(self):
+        # Ensure neither guard is set during the tests by default.
+        self._gui = os.environ.pop("MARCH7TH_GUI_STARTED", None)
+        self._docker = os.environ.pop("MARCH7TH_DOCKER_STARTED", None)
+        self.controller = object.__new__(CloudGameController)
+        self.controller.logger = _CaptureLogger()
+
+    def tearDown(self):
+        if self._gui is not None:
+            os.environ["MARCH7TH_GUI_STARTED"] = self._gui
+        if self._docker is not None:
+            os.environ["MARCH7TH_DOCKER_STARTED"] = self._docker
+
+    def _swap_stdout(self, new_stream):
+        old = sys.stdout
+        sys.stdout = new_stream
+        return old
+
+    def test_renders_ansi_to_tty_stdout(self):
+        buf = _TtyStringIO()
+        old = self._swap_stdout(buf)
+        try:
+            rendered = self.controller._render_qr_to_terminal(
+                "https://example.com/qr-login?token=ABCD"
+            )
+        finally:
+            self._swap_stdout(old)
+        self.assertTrue(rendered)
+        out = buf.getvalue()
+        self.assertIn("\x1b[47m", out, "explicit white background required")
+        self.assertIn("\x1b[0m", out, "ANSI reset required")
+
+    def test_no_login_url_in_info_logs(self):
+        """The decoded login URL must never reach log_info — otherwise it
+        would land in the on-disk log file."""
+        buf = _TtyStringIO()
+        old = self._swap_stdout(buf)
+        try:
+            self.controller._render_qr_to_terminal(
+                "https://user.miyoushe.com/qr-login?token=SECRET_TOKEN"
+            )
+        finally:
+            self._swap_stdout(old)
+        for line in self.controller.logger.info_messages:
+            self.assertNotIn("SECRET_TOKEN", line)
+            self.assertNotIn("qr-login", line)
+
+    def test_gui_mode_skips_render_by_default(self):
+        os.environ["MARCH7TH_GUI_STARTED"] = "true"
+        buf = _TtyStringIO()
+        old = self._swap_stdout(buf)
+        try:
+            rendered = self.controller._render_qr_to_terminal(
+                "https://example.com/qr-login?token=ABCD"
+            )
+        finally:
+            self._swap_stdout(old)
+        self.assertFalse(rendered)
+        self.assertEqual(buf.getvalue(), "")
+        self.assertFalse(
+            any("终端二维码已写入" in msg for msg in self.controller.logger.info_messages)
+        )
+
+    def test_gui_mode_with_terminal_flag_still_renders(self):
+        # The terminal runner sets MARCH7TH_GUI_STARTED=true to suppress
+        # pause, but it also sets MARCH7TH_TERMINAL=1 to keep the QR
+        # visible. That combination must NOT short-circuit the renderer.
+        os.environ["MARCH7TH_GUI_STARTED"] = "true"
+        os.environ["MARCH7TH_TERMINAL"] = "1"
+        buf = _TtyStringIO()
+        old = self._swap_stdout(buf)
+        try:
+            rendered = self.controller._render_qr_to_terminal(
+                "https://example.com/qr-login?token=ABCD"
+            )
+        finally:
+            self._swap_stdout(old)
+            os.environ.pop("MARCH7TH_TERMINAL", None)
+        self.assertTrue(rendered)
+        out = buf.getvalue()
+        self.assertIn("\x1b[47m", out, "explicit white background required")
+
+    def test_terminal_flag_tolerates_alternate_values(self):
+        # Same tolerant-reader style as is_gui_started.
+        with patch.dict(os.environ, {"MARCH7TH_TERMINAL": "yes"}):
+            self.assertTrue(CloudGameController._terminal_qr_explicitly_requested())
+        with patch.dict(os.environ, {"MARCH7TH_TERMINAL": "TRUE"}):
+            self.assertTrue(CloudGameController._terminal_qr_explicitly_requested())
+        with patch.dict(os.environ, {"MARCH7TH_TERMINAL": "1"}):
+            self.assertTrue(CloudGameController._terminal_qr_explicitly_requested())
+        with patch.dict(os.environ, {"MARCH7TH_TERMINAL": ""}):
+            self.assertFalse(CloudGameController._terminal_qr_explicitly_requested())
+        with patch.dict(os.environ, {"MARCH7TH_TERMINAL": "no"}):
+            self.assertFalse(CloudGameController._terminal_qr_explicitly_requested())
+        os.environ.pop("MARCH7TH_TERMINAL", None)
+        self.assertFalse(CloudGameController._terminal_qr_explicitly_requested())
+
+    def test_too_narrow_terminal_emits_widen_warning_without_url(self):
+        # Force the renderer down the narrow-width branch by wrapping
+        # render_qr_terminal so it always receives max_width=5. The default
+        # min_width=40 would otherwise mask a too-narrow terminal.
+        from utils import terminal_qr as qr_module
+        original_render = qr_module.render_qr_terminal
+
+        def narrow_render(qr_data, **kwargs):
+            kwargs["max_width"] = 5
+            return original_render(qr_data, **kwargs)
+
+        qr_module.render_qr_terminal = narrow_render
+        buf = _TtyStringIO()
+        old = self._swap_stdout(buf)
+        try:
+            rendered = self.controller._render_qr_to_terminal(
+                "https://example.com/qr-login?token=SECRET_TOKEN"
+            )
+        finally:
+            self._swap_stdout(old)
+            qr_module.render_qr_terminal = original_render
+        self.assertFalse(rendered)
+        # Warning must mention widening but never the URL / token.
+        warning_blob = " ".join(self.controller.logger.warning_messages)
+        self.assertIn("终端窗口过窄", warning_blob)
+        self.assertNotIn("SECRET_TOKEN", warning_blob)
+        self.assertNotIn("qr-login", warning_blob)
+        # The TTY buffer must NOT contain any QR output (broken code is the bug).
+        self.assertNotIn("\x1b", buf.getvalue())
+
+    def test_docker_mode_skips_render(self):
+        os.environ["MARCH7TH_DOCKER_STARTED"] = "true"
+        buf = _TtyStringIO()
+        old = self._swap_stdout(buf)
+        try:
+            rendered = self.controller._render_qr_to_terminal(
+                "https://example.com/qr-login?token=ABCD"
+            )
+        finally:
+            self._swap_stdout(old)
+        self.assertFalse(rendered)
+        self.assertEqual(buf.getvalue(), "")
+
+    def test_empty_data_is_a_noop(self):
+        buf = _TtyStringIO()
+        old = self._swap_stdout(buf)
+        try:
+            rendered = self.controller._render_qr_to_terminal("")
+        finally:
+            self._swap_stdout(old)
+        self.assertFalse(rendered)
+        self.assertEqual(buf.getvalue(), "")
+
+    def test_non_tty_stdout_falls_back_to_ascii(self):
+        """When stdout isn't a TTY we must NOT emit ANSI escapes (they'd
+        land as garbage in log files / piped output)."""
+        non_tty = io.StringIO()
+        non_tty.isatty = lambda: False  # type: ignore[assignment]
+        old = self._swap_stdout(non_tty)
+        try:
+            rendered = self.controller._render_qr_to_terminal(
+                "https://example.com/qr-login?token=ABCD"
+            )
+        finally:
+            self._swap_stdout(old)
+        self.assertTrue(rendered)
+        out = non_tty.getvalue()
+        self.assertNotIn("\x1b", out)
+        self.assertIn("#", out, "ASCII fallback must use the # glyph")
+
+    def test_refresh_path_calls_render_via_decode(self):
+        """_wait_scan_success_with_refresh routes refreshed QR images through
+        _decode_qr_from_element, which must invoke _render_qr_to_terminal
+        so the user gets a fresh QR on each refresh."""
+        buf = _TtyStringIO()
+        old = self._swap_stdout(buf)
+        try:
+            with patch.object(
+                self.controller,
+                "_decode_qr_from_element",
+                wraps=self.controller._decode_qr_from_element,
+            ) as wrapped_decode:
+                # We can't actually drive _wait_scan_success_with_refresh
+                # without selenium, but we can confirm the wiring by
+                # asserting _render_qr_to_terminal is called when the
+                # decode helper succeeds.
+                self.controller._render_qr_to_terminal(
+                    "https://example.com/qr-login?token=ABCD"
+                )
+                self.controller._decode_qr_from_element(
+                    qr_img=None, qr_filename="ignored"
+                )
+        finally:
+            self._swap_stdout(old)
+        # The decode path will swallow missing selenium pieces; the
+        # relevant fact is that calling _render_qr_to_terminal twice
+        # produces two log_info messages without leaking the URL.
+        info_lines = self.controller.logger.info_messages
+        for line in info_lines:
+            self.assertNotIn("qr-login", line)

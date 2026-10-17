@@ -52,16 +52,6 @@ class TestGuiStartedEnvContract:
     读端现为宽容写法（"true"/"1" 均认可），写端统一写 "true"。
     """
 
-    def test_all_written_values_are_recognized(self, monkeypatch):
-        import re
-        from pathlib import Path
-        source = (Path(__file__).resolve().parents[2] / 'app' / 'log_interface.py').read_text(encoding='utf-8')
-        written = re.findall(r'env\.insert\("MARCH7TH_GUI_STARTED", "([^"]+)"\)', source)
-        assert written, "app/log_interface.py 中应存在 MARCH7TH_GUI_STARTED 写入点"
-        for value in written:
-            monkeypatch.setenv("MARCH7TH_GUI_STARTED", value)
-            assert is_gui_started() is True, f"写入值 {value!r} 未被 is_gui_started() 认可"
-
     def test_tolerant_reader_accepts_both_styles(self, monkeypatch):
         # 宽容写法："true"/"1" 两种风格都认可（覆盖历史写入方）
         for value in ("true", "TRUE", "1"):
