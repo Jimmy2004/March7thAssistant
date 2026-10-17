@@ -75,7 +75,8 @@ TASK_CHOICES: tuple[str, ...] = (
 CLOUD_GAME_DEFAULTS: dict[str, Any] = {
     "cloud_game_enable": True,
     "browser_headless_enable": True,  # 由 debug 标志在写入时取反
-    "browser_headless_restart_on_not_logged_in": False,
+    "browser_headless_restart_on_not_logged_in": True,
+    "browser_persistent_enable": True,
     "locales": "zh_CN",
     "after_finish": "Exit",
     "pause_after_success": False,

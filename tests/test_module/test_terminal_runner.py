@@ -120,7 +120,7 @@ def test_build_env_sets_required_variables(monkeypatch):
     assert env["MARCH7TH_TERMINAL"] == "1"
     assert env["MARCH7TH_CLOUD_GAME_ENABLE"] == "true"
     assert env["MARCH7TH_BROWSER_HEADLESS_ENABLE"] == "true"
-    assert env["MARCH7TH_BROWSER_HEADLESS_RESTART_ON_NOT_LOGGED_IN"] == "false"
+    assert env["MARCH7TH_BROWSER_HEADLESS_RESTART_ON_NOT_LOGGED_IN"] == "true"
     assert "MARCH7TH_GUI_STARTED" not in env
     assert env["PYTHONUNBUFFERED"] == "1"
     assert "QT_QPA_PLATFORM_PLUGIN_PATH" not in env

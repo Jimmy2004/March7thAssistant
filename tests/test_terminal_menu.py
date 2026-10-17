@@ -266,7 +266,8 @@ def test_first_setup_completed_writes_config_and_settings(
         cfg = yaml.load(fp)
     assert cfg["cloud_game_enable"] is True
     assert cfg["browser_headless_enable"] is True  # debug=False → headless=True
-    assert cfg["browser_headless_restart_on_not_logged_in"] is False
+    assert cfg["browser_headless_restart_on_not_logged_in"] is True
+    assert cfg["browser_persistent_enable"] is True
     assert cfg["locales"] == "zh_CN"
     assert cfg["after_finish"] == "Exit"
     assert cfg["pause_after_success"] is False

@@ -139,7 +139,8 @@ TERMINAL_MODE = os.environ.get("MARCH7TH_TERMINAL") == "1"
 if TERMINAL_MODE:
     cfg.config.update({
         "cloud_game_enable": True,
-        "browser_headless_restart_on_not_logged_in": False,
+        "browser_headless_restart_on_not_logged_in": True,
+        "browser_persistent_enable": True,
         "after_finish": "Exit",
         "pause_after_success": False,
         "exit_after_failure": True,

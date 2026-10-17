@@ -1343,41 +1343,66 @@ class CloudGameController(GameControllerBase):
         return any(element.is_displayed() for element in
                    self.driver.find_elements(By.CSS_SELECTOR, ".game-player"))
 
+    def _show_browser_qr_login(self) -> None:
+        """Show the official QR in the temporary login window."""
+        try:
+            self._switch_to_login_iframe()
+            if not any(image.is_displayed() for image in
+                       self.driver.find_elements(By.CSS_SELECTOR, "img.qr-loaded")):
+                self._click_qr_login_button()
+            WebDriverWait(self.driver, 10).until(
+                EC.visibility_of_element_located((By.CSS_SELECTOR, "img.qr-loaded")))
+        except TimeoutException:
+            self.log_warning("二维码未自动显示，请在浏览器中选择「扫码登录」")
+        finally:
+            self.driver.switch_to.default_content()
+
+    def _ensure_cloud_login(self) -> None:
+        if self._check_login():
+            return
+        seconds = self._get_login_timeout_seconds()
+        deadline = time.monotonic() + seconds
+        temporary_window = self.cfg.browser_headless_enable and (
+            self.cfg.browser_headless_restart_on_not_logged_in
+            or os.environ.get("MARCH7TH_TERMINAL", "").lower() in {"1", "true", "yes", "on"})
+        try:
+            if temporary_window:
+                if not self.cfg.browser_persistent_enable:
+                    raise RuntimeError("扫码登录后返回后台需要启用浏览器登录状态保存")
+                self.log_info("需要登录，正在打开浏览器，请用米游社扫描网页二维码并在手机上确认")
+                self._restart_browser(headless=False)
+                self._show_browser_qr_login()
+            elif not self.cfg.browser_headless_enable:
+                self._show_browser_qr_login()
+            else:
+                self._run_qr_login_flow(deadline, seconds)
+
+            self.log_info(f"等待手机确认登录，最长 {seconds // 60} 分钟")
+            while True:
+                self._check_login_timeout(deadline, seconds)
+                # Root-page account state means confirmation finished; scanning
+                # alone (iframe '扫码成功') must never close the login window.
+                if self._check_login():
+                    break
+                time.sleep(2)
+
+            if temporary_window:
+                self.log_info("登录成功，正在关闭登录窗口并返回无窗口模式")
+                self._restart_browser(headless=True)
+                self._check_login_timeout(deadline, seconds)
+                if not self._check_login(timeout=15):
+                    raise RuntimeError("登录状态未能保留，已停止任务，请重新登录")
+            else:
+                self.log_info("检测到登录成功")
+        except BaseException:
+            if temporary_window:
+                self.stop_game()
+            raise
+
     def enter_cloud_game(self) -> bool:
         """进入云游戏"""
         try:
-            # 检测登录状态
-            while not self._check_login():
-                login_timeout_seconds = self._get_login_timeout_seconds()
-                login_deadline = time.monotonic() + login_timeout_seconds
-                self.log_info("未登录")
-
-                # 如果是 headless 且配置了自动重启，则以非 headless 模式重启启动让用户登录
-                if self.cfg.browser_headless_enable and self.cfg.browser_headless_restart_on_not_logged_in:
-                    self.log_info("无窗口模式下检测到未登录，将以有窗口模式重启浏览器")
-                    self._restart_browser(headless=False)
-
-                # 如果是 headless 且配置了不重启，则尝试二维码登录
-                if self.cfg.browser_headless_enable and (not self.cfg.browser_headless_restart_on_not_logged_in):
-                    self._run_qr_login_flow(login_deadline, login_timeout_seconds)
-
-                self.log_info(f"请在浏览器中完成登录操作，超时时间：{login_timeout_seconds // 60} 分钟")
-
-                # 循环检测用户是否登录
-                while True:
-                    self._check_login_timeout(login_deadline, login_timeout_seconds)
-                    if self._check_login():
-                        break
-                    time.sleep(2)
-
-                self.log_info("检测到登录成功")
-
-                # 如果为 headless 模式，则重启浏览器回到 headless 模式
-                if self.cfg.browser_headless_enable and self.cfg.browser_headless_restart_on_not_logged_in:
-                    if self.cfg.browser_dump_cookies_enable:
-                        self._save_cookies()
-                    self.log_info("登录完成，将重启为无窗口模式")
-                    self._restart_browser(headless=True)
+            self._ensure_cloud_login()
 
             if self.cfg.browser_dump_cookies_enable:
                 self._save_cookies()

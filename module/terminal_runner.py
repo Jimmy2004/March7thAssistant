@@ -69,7 +69,7 @@ def _build_env(debug: bool) -> dict[str, str]:
     env["MARCH7TH_TERMINAL"] = "1"
     env["MARCH7TH_CLOUD_GAME_ENABLE"] = "true"
     env["MARCH7TH_BROWSER_HEADLESS_ENABLE"] = "false" if debug else "true"
-    env["MARCH7TH_BROWSER_HEADLESS_RESTART_ON_NOT_LOGGED_IN"] = "false"
+    env["MARCH7TH_BROWSER_HEADLESS_RESTART_ON_NOT_LOGGED_IN"] = "true"
     env.pop("MARCH7TH_GUI_STARTED", None)
     env["MARCH7TH_AFTER_FINISH"] = "Exit"
     return env
